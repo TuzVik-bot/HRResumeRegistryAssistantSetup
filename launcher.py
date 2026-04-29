@@ -6,6 +6,7 @@ import webbrowser
 import uvicorn
 
 from app.config import APP_NAME
+from app.main import app as _app
 
 
 HOST = "127.0.0.1"
@@ -33,7 +34,7 @@ def main() -> None:
     print(f"{APP_NAME} запущен: {url}")
     print("Не закрывайте это окно, пока работает приложение.")
     threading.Thread(target=_open_browser, args=(url,), daemon=True).start()
-    uvicorn.run("app.main:app", host=HOST, port=port, log_level="warning")
+    uvicorn.run(_app, host=HOST, port=port, log_level="warning")
 
 
 if __name__ == "__main__":
