@@ -14,10 +14,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -26,7 +26,23 @@ jobs:
 
       - name: Build installer
         shell: pwsh
-        run: .\packaging\build_windows.ps1 -UseCurrentPython
+        run: |
+          New-Item -ItemType Directory -Force .\dist\build_logs | Out-Null
+          try {
+            .\packaging\build_windows.ps1 -UseCurrentPython *>&1 | Tee-Object .\dist\build_logs\windows-build.log
+          }
+          catch {
+            $_ | Out-File -FilePath .\dist\build_logs\windows-build.log -Append
+            throw
+          }
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-log
+          path: dist/build_logs/windows-build.log
+          if-no-files-found: warn
 
       - name: Verify artifacts
         shell: pwsh
