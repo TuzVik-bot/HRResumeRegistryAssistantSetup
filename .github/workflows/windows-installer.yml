@@ -26,7 +26,7 @@ jobs:
 
       - name: Build installer
         shell: pwsh
-        run: .\packaging\build_windows.ps1
+        run: .\packaging\build_windows.ps1 -UseCurrentPython
 
       - name: Verify artifacts
         shell: pwsh

@@ -1,12 +1,12 @@
 param(
-    [switch]$AllowStandaloneOnly
+    [switch]$AllowStandaloneOnly,
+    [switch]$UseCurrentPython
 )
 
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $VenvDir = Join-Path $ProjectRoot ".venv-win-build"
-$PythonExe = Join-Path $VenvDir "Scripts\python.exe"
 $SpecFile = Join-Path $PSScriptRoot "HRResumeRegistryAssistant.spec"
 $InstallerScript = Join-Path $PSScriptRoot "installer.iss"
 $ExePath = Join-Path $ProjectRoot "dist\HRResumeRegistryAssistant.exe"
@@ -15,22 +15,27 @@ $InstallerPath = Join-Path $ProjectRoot "dist\installer\HRResumeRegistryAssistan
 Write-Host "== HR Resume Registry Assistant: Windows build =="
 Write-Host "Project: $ProjectRoot"
 
-$PythonLauncher = Get-Command py -ErrorAction SilentlyContinue
 $PythonCommand = Get-Command python -ErrorAction SilentlyContinue
 
-if (-not $PythonLauncher -and -not $PythonCommand) {
+if (-not $PythonCommand) {
     throw "Python не найден. Установите Python 3.11+ для Windows и повторите сборку."
 }
 
-if (-not (Test-Path $PythonExe)) {
-    Write-Host "Creating build virtual environment..."
-    if ($PythonLauncher) {
-        & $PythonLauncher.Source -3 -m venv $VenvDir
+$PythonExe = $PythonCommand.Source
+
+if (-not $UseCurrentPython) {
+    $VenvPythonExe = Join-Path $VenvDir "Scripts\python.exe"
+
+    if (-not (Test-Path $VenvPythonExe)) {
+        Write-Host "Creating build virtual environment..."
+        & $PythonExe -m venv $VenvDir
     }
-    else {
-        & $PythonCommand.Source -m venv $VenvDir
-    }
+
+    $PythonExe = $VenvPythonExe
 }
+
+Write-Host "Python: $PythonExe"
+& $PythonExe --version
 
 Write-Host "Installing build dependencies..."
 & $PythonExe -m pip install --upgrade pip
@@ -60,6 +65,11 @@ $InnoCandidates = @(
     "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
 ) | Where-Object { $_ -and (Test-Path $_) }
 
+$InnoCommand = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+if ($InnoCommand) {
+    $InnoCandidates += $InnoCommand.Source
+}
+
 if ($InnoCandidates.Count -eq 0) {
     if ($AllowStandaloneOnly) {
         Write-Warning "Inno Setup 6 не найден. Установите его: winget install JRSoftware.InnoSetup"
@@ -71,6 +81,7 @@ if ($InnoCandidates.Count -eq 0) {
 }
 
 Write-Host "Building installer..."
+Write-Host "Inno Setup compiler: $($InnoCandidates[0])"
 & $InnoCandidates[0] $InstallerScript
 
 if (-not (Test-Path $InstallerPath)) {
