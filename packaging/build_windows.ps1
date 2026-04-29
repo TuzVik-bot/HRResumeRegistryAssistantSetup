@@ -60,15 +60,17 @@ if (-not (Test-Path $ExePath)) {
     throw "EXE не найден после сборки: $ExePath"
 }
 
-$InnoCandidates = @(
+$InnoCandidates = @(@(
     "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
     "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
-) | Where-Object { $_ -and (Test-Path $_) }
+) | Where-Object { $_ -and (Test-Path $_) })
 
 $InnoCommand = Get-Command ISCC.exe -ErrorAction SilentlyContinue
 if ($InnoCommand) {
-    $InnoCandidates += $InnoCommand.Source
+    $InnoCandidates += @($InnoCommand.Source)
 }
+
+$InnoCandidates = @($InnoCandidates | Select-Object -Unique)
 
 if ($InnoCandidates.Count -eq 0) {
     if ($AllowStandaloneOnly) {
