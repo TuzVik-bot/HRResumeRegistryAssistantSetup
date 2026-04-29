@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Документы кандидатов</p>
+    <h1>Загрузка резюме</h1>
+  </div>
+</header>
+<section class="panel upload-panel">
+  <form action="/upload-resumes" method="post" enctype="multipart/form-data" class="upload-form" data-upload-form>
+    <div class="field">
+      <label>Файлы резюме</label>
+      <input type="file" name="files" accept=".pdf,.docx,.txt" multiple required>
+      <p class="field-help">Можно выбрать сразу несколько файлов. Поддерживаются PDF, DOCX и TXT.</p>
+    </div>
+    <button type="submit">Загрузить резюме</button>
+    <div class="upload-progress" data-upload-progress hidden>
+      <div class="upload-progress-head">
+        <span data-upload-status>Подготовка загрузки</span>
+        <strong data-upload-percent>0%</strong>
+      </div>
+      <div class="progress-track"><div class="progress-fill" data-upload-bar></div></div>
+    </div>
+  </form>
+  <p class="muted">Поддерживаемые форматы: PDF, DOCX, TXT. Исходные файлы не перезаписываются.</p>
+</section>
+{% endblock %}

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="page-header"><h1>Экспорт</h1></header>
+<section class="panel">
+  <form action="/export" method="post">
+    <button type="submit">Создать обогащенный Excel</button>
+  </form>
+  <p class="muted">Найденные резюме копируются в project_files/ready/matched_resumes. Обогащенный реестр сохраняется в project_files/ready/registry.</p>
+</section>
+{% endblock %}

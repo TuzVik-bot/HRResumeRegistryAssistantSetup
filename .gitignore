@@ -1,0 +1,17 @@
+.venv/
+.venv-win-build/
+.env
+__pycache__/
+.pytest_cache/
+*.pyc
+build/
+dist/
+packaging/Архив/
+packaging/Архив.zip
+
+data/
+uploads/
+output/
+project_files/
+
+.DS_Store

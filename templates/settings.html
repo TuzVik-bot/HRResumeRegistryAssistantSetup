@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="page-header"><h1>Настройки ИИ-извлечения</h1></header>
+<section class="panel">
+  <form action="/settings" method="post" class="upload-form">
+    <label class="checkbox-row">
+      <input type="checkbox" name="enabled" {% if settings.AI_EXTRACTION_ENABLED == "true" %}checked{% endif %}>
+      Включить ИИ-извлечение
+    </label>
+
+    <label>Провайдер</label>
+    <select name="provider">
+      <option value="gemini" {% if settings.AI_PROVIDER == "gemini" %}selected{% endif %}>Gemini-совместимый</option>
+    </select>
+
+    <label>Модель</label>
+    <select name="model">
+      <option value="gemini-3-flash-preview" {% if settings.AI_MODEL == "gemini-3-flash-preview" %}selected{% endif %}>Gemini 3 Flash Preview — быстрее для резюме</option>
+      <option value="gemini-3-pro-preview" {% if settings.AI_MODEL == "gemini-3-pro-preview" %}selected{% endif %}>Gemini 3 Pro Preview — сложные резюме</option>
+      <option value="gemini-2.5-flash" {% if settings.AI_MODEL == "gemini-2.5-flash" %}selected{% endif %}>Gemini 2.5 Flash — стабильный вариант</option>
+    </select>
+
+    <label>API-ключ</label>
+    <input type="password" name="api_key" placeholder="{{ api_key_mask }}">
+
+    <button type="submit">Сохранить настройки</button>
+  </form>
+  <p class="muted">Ключ хранится только локально в файле .env. ИИ вызывается только при слабом локальном извлечении или статусе сопоставления "проверить". В запрос отправляются только первые 6000 символов текста резюме.</p>
+</section>
+{% endblock %}

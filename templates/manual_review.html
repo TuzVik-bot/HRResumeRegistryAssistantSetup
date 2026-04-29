@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Контроль качества</p>
+    <h1>Ручная проверка</h1>
+  </div>
+</header>
+<section class="table-wrap">
+  <table class="data-table manual-table">
+    <colgroup>
+      <col class="col-candidate">
+      <col class="col-source">
+      <col class="col-person">
+      <col class="col-current-resume">
+      <col class="col-status">
+      <col class="col-reason">
+      <col class="col-actions">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>ID кандидата</th>
+        <th>Источник</th>
+        <th>ФИО / вакансия</th>
+        <th>Текущее резюме</th>
+        <th>Статус</th>
+        <th>Причина</th>
+        <th>Решение</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td class="cell-id"><strong>{{ row.candidate_id }}</strong></td>
+        <td>
+          <div>строка Excel: <strong>{{ row.excel_row_number }}</strong></div>
+          <a class="file-link" href="/source/registry/{{ row.registry_id }}" target="_blank">открыть исходный реестр</a>
+        </td>
+        <td>
+          <strong>{{ row.full_name or "ФИО не заполнено" }}</strong>
+          <div class="muted">{{ row.vacancy or "вакансия не заполнена" }}</div>
+        </td>
+        <td>
+          {% if row.resume_id %}
+          <a class="file-link" href="/source/resume/{{ row.resume_id }}" target="_blank">{{ row.resume_original_filename or "открыть резюме" }}</a>
+          {% else %}
+          <span class="muted">резюме не выбрано</span>
+          {% endif %}
+          <div class="muted">уверенность: {{ "%.1f"|format(row.score or 0) }}</div>
+        </td>
+        <td><span class="badge {{ row.match_status or 'not_run' }}">{{ row.match_status|status_label }}</span></td>
+        <td><div class="reason-cell">{{ row.match_reason|reason_label }}</div></td>
+        <td>
+          <form class="manual-form" action="/manual-review/{{ row.id }}" method="post">
+            <label>Выбрать резюме</label>
+            <select name="resume_id">
+              <option value="">без резюме</option>
+              {% for resume in resumes %}
+              <option value="{{ resume.id }}" {% if row.resume_id == resume.id %}selected{% endif %}>{{ resume.original_filename }}</option>
+              {% endfor %}
+            </select>
+            <label>Или найти по названию файла</label>
+            <input
+              type="text"
+              name="resume_query"
+              list="resume-options-{{ row.id }}"
+              placeholder="Начните вводить название резюме"
+              autocomplete="off"
+            >
+            <datalist id="resume-options-{{ row.id }}">
+              {% for resume in resumes %}
+              <option value="{{ resume.original_filename }}"></option>
+              {% endfor %}
+            </datalist>
+            <div class="manual-actions">
+              <button class="small-button" type="submit" name="action" value="confirm">Подтвердить</button>
+              <button class="small-button secondary" type="submit" name="action" value="review">Оставить</button>
+              <button class="small-button danger" type="submit" name="action" value="reject">Отклонить</button>
+            </div>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

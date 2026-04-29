@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Импорт данных</p>
+    <h1>Загрузка реестра</h1>
+  </div>
+</header>
+<section class="panel upload-panel">
+  <form action="/upload-registry" method="post" enctype="multipart/form-data" class="upload-form" data-upload-form>
+    <div class="field">
+      <label>Excel-реестр</label>
+      <input type="file" name="file" accept=".xlsx,.xlsm,.xls" required>
+      <p class="field-help">Нужен лист "реестр"; листы "термины" и "регламент" используются при наличии.</p>
+    </div>
+    <button type="submit">Импортировать реестр</button>
+    <div class="upload-progress" data-upload-progress hidden>
+      <div class="upload-progress-head">
+        <span data-upload-status>Подготовка загрузки</span>
+        <strong data-upload-percent>0%</strong>
+      </div>
+      <div class="progress-track"><div class="progress-fill" data-upload-bar></div></div>
+    </div>
+  </form>
+  <p class="muted">Импорт очищает текущие рабочие данные в SQLite. Исходный Excel-файл копируется в папку project_files/source/registry.</p>
+</section>
+{% endblock %}

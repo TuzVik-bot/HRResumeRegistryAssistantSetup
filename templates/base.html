@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HR-ассистент реестра резюме</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}?v=4">
+  <script src="{{ url_for('static', path='/upload-progress.js') }}?v=3" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <img class="brand-mark" src="{{ url_for('static', path='/catlogic-logo.png') }}" alt="Логотип CatLogic">
+      <div>
+        <span>HR-ассистент</span>
+        <strong>реестра резюме</strong>
+      </div>
+    </div>
+    <nav>
+      <a class="{% if request.url.path == '/' %}active{% endif %}" href="/">Панель</a>
+      <a class="{% if request.url.path == '/upload-registry' %}active{% endif %}" href="/upload-registry">Загрузка реестра</a>
+      <a class="{% if request.url.path == '/upload-resumes' %}active{% endif %}" href="/upload-resumes">Загрузка резюме</a>
+      <a class="{% if request.url.path == '/matching-results' %}active{% endif %}" href="/matching-results">Результаты сопоставления</a>
+      <a class="{% if request.url.path == '/manual-review' %}active{% endif %}" href="/manual-review">Ручная проверка</a>
+      <a class="{% if request.url.path == '/data-quality' %}active{% endif %}" href="/data-quality">Качество данных</a>
+      <a class="{% if request.url.path == '/settings' %}active{% endif %}" href="/settings">Настройки ИИ</a>
+      <a class="{% if request.url.path == '/export' %}active{% endif %}" href="/export">Экспорт</a>
+    </nav>
+    <div class="sidebar-asset">
+      <img src="{{ url_for('static', path='/cat-ai-head.png') }}" alt="ИИ-ассистент CatLogic">
+      <p>Локальная обработка, контролируемые данные, точные совпадения.</p>
+    </div>
+  </aside>
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

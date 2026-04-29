@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="page-header">
+  <h1>Результаты сопоставления</h1>
+  <form action="/run-matching" method="post"><button type="submit">Запустить сопоставление</button></form>
+</header>
+<section class="table-wrap table-wrap-results">
+  <table class="data-table matching-table">
+    <colgroup>
+      <col class="col-excel">
+      <col class="col-name">
+      <col class="col-vacancy">
+      <col class="col-status">
+      <col class="col-score">
+      <col class="col-resume">
+      <col class="col-reason">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>Строка Excel</th><th>ФИО</th><th>Вакансия</th><th>Статус</th><th>Уверенность</th><th>Резюме</th><th>Причина</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td class="cell-id">
+          <strong>{{ row.excel_row_number }}</strong>
+          <span>{{ row.candidate_id }}</span>
+          {% if row.registry_id %}
+          <a class="file-link" href="/source/registry/{{ row.registry_id }}" target="_blank">реестр</a>
+          {% endif %}
+        </td>
+        <td>{{ row.full_name or "" }}</td>
+        <td>{{ row.vacancy or "" }}</td>
+        <td><span class="badge {{ row.match_status or 'not_run' }}">
+          {{ row.match_status|status_label }}
+        </span></td>
+        <td>{{ "%.1f"|format(row.score or 0) }}</td>
+        <td>
+          {% if row.resume_id %}
+          <a class="file-link" href="/source/resume/{{ row.resume_id }}" target="_blank">{{ row.resume_original_filename or "открыть резюме" }}</a>
+          {% else %}
+          -
+          {% endif %}
+        </td>
+        <td><div class="reason-cell">{{ row.match_reason|reason_label }}</div></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
