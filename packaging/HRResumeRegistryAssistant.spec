@@ -1,46 +1,55 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
-
-block_cipher = None
 
 hiddenimports = []
 hiddenimports += collect_submodules("app")
 hiddenimports += collect_submodules("uvicorn")
+hiddenimports += collect_submodules("fastapi")
+hiddenimports += collect_submodules("starlette")
+hiddenimports += [
+    "uvicorn.logging",
+    "uvicorn.loops.auto",
+    "uvicorn.protocols.http.auto",
+    "uvicorn.protocols.websockets.auto",
+    "uvicorn.lifespan.on",
+    "multipart",
+    "email_validator",
+]
+
+datas = [
+    ("..\\templates", "templates"),
+    ("..\\static", "static"),
+]
+datas += collect_data_files("fastapi")
+datas += collect_data_files("starlette")
 
 a = Analysis(
     ["..\\launcher.py"],
     pathex=[],
     binaries=[],
-    datas=[
-        ("..\\templates", "templates"),
-        ("..\\static", "static"),
-    ],
+    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=["pytest", "tests"],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
     noarchive=False,
 )
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure)
 
 exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
-    a.zipfiles,
     a.datas,
     [],
     name="HRResumeRegistryAssistant",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=True,
