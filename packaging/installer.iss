@@ -1,5 +1,6 @@
 #define MyAppName "HR Resume Registry Assistant"
 #define MyAppVersion "1.0.0"
+#define MyAppVersionInfo "1.0.0.0"
 #define MyAppDeveloper "Nikita Karpuk / AAR Group"
 #define MyAppPublisher "AAR Group"
 #define MyAppExeName "HRResumeRegistryAssistant.exe"
@@ -22,7 +23,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 InfoBeforeFile=installer_info_ru.txt
-VersionInfoVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppVersionInfo}
 VersionInfoCompany={#MyAppDeveloper}
 VersionInfoDescription={#MyAppName} installer
 VersionInfoProductName={#MyAppName}

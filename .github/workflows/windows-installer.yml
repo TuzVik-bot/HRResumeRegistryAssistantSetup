@@ -44,6 +44,17 @@ jobs:
           path: dist/build_logs/windows-build.log
           if-no-files-found: warn
 
+      - name: Publish build diagnostics summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path ".\dist\build_logs\windows-build.log") {
+            "## Windows build log" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            '```text' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            Get-Content ".\dist\build_logs\windows-build.log" -Tail 120 | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            '```' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
+
       - name: Verify artifacts
         shell: pwsh
         run: |
