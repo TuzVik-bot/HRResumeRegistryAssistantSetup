@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files, collect_all
 
 
 hiddenimports = []
@@ -8,6 +8,8 @@ hiddenimports += collect_submodules("app")
 hiddenimports += collect_submodules("uvicorn")
 hiddenimports += collect_submodules("fastapi")
 hiddenimports += collect_submodules("starlette")
+hiddenimports += collect_submodules("numpy")
+hiddenimports += collect_submodules("pandas")
 hiddenimports += [
     "uvicorn.logging",
     "uvicorn.loops.auto",
@@ -15,8 +17,18 @@ hiddenimports += [
     "uvicorn.protocols.websockets.auto",
     "uvicorn.lifespan.on",
     "multipart",
-    "email_validator",
+    "numpy._core._exceptions",
+    "numpy._core._multiarray_umath",
+    "numpy._core.multiarray",
+    "pandas._libs.tslibs.np_datetime",
+    "pandas._libs.tslibs.nattype",
+    "pandas._libs.tslibs.timedeltas",
 ]
+
+numpy_datas, numpy_binaries, numpy_hiddenimports = collect_all("numpy")
+pandas_datas, pandas_binaries, pandas_hiddenimports = collect_all("pandas")
+hiddenimports += numpy_hiddenimports
+hiddenimports += pandas_hiddenimports
 
 datas = [
     ("..\\templates", "templates"),
@@ -24,11 +36,13 @@ datas = [
 ]
 datas += collect_data_files("fastapi")
 datas += collect_data_files("starlette")
+datas += numpy_datas
+datas += pandas_datas
 
 a = Analysis(
     ["..\\launcher.py"],
     pathex=[],
-    binaries=[],
+    binaries=numpy_binaries + pandas_binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
