@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Поддержка и контроль</p>
+    <h1>Диагностика</h1>
+  </div>
+</header>
+
+<section class="stats">
+  <div><strong>{{ counts.all }}</strong><span>События</span></div>
+  <div><strong>{{ counts.errors }}</strong><span>Ошибки</span></div>
+  <div><strong>{{ counts.upload }}</strong><span>Загрузки</span></div>
+  <div><strong>{{ counts.matching + counts.export }}</strong><span>Сопоставление и экспорт</span></div>
+</section>
+
+<section class="panel">
+  <div class="filter-row">
+    {% for key, label in filters.items() %}
+    <a class="filter-chip {% if active_filter == key %}active{% endif %}" href="/diagnostics?filter={{ key }}">
+      {{ label }}
+      {% if key in counts %}
+      <span>{{ counts[key] }}</span>
+      {% endif %}
+    </a>
+    {% endfor %}
+  </div>
+  <p class="muted">Показываются последние 1000 событий. Персональные данные, ключи и полный текст документов в журнал не записываются.</p>
+</section>
+
+<section class="table-wrap">
+  <table class="data-table diagnostics-table">
+    <colgroup>
+      <col class="col-time">
+      <col class="col-level">
+      <col class="col-source">
+      <col class="col-action">
+      <col class="col-message">
+      <col class="col-context">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>Время</th>
+        <th>Уровень</th>
+        <th>Категория</th>
+        <th>Действие</th>
+        <th>Сообщение</th>
+        <th>Контекст</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.created_at }}</td>
+        <td><span class="badge badge-log {{ row.level }}">{{ row.level }}</span></td>
+        <td>{{ row.category }}</td>
+        <td>{{ row.action }}</td>
+        <td>{{ row.message }}</td>
+        <td>
+          {% if row.context_json and row.context_json != '{}' %}
+          <pre class="context-json">{{ row.context_json }}</pre>
+          {% else %}
+          <span class="muted">без контекста</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="6" class="muted">События по выбранному фильтру пока не найдены.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

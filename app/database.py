@@ -32,6 +32,8 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 filename TEXT NOT NULL,
                 file_path TEXT NOT NULL,
+                file_hash TEXT,
+                source_schema TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -85,11 +87,24 @@ def init_db() -> None:
                 FOREIGN KEY (candidate_id) REFERENCES candidates(id),
                 FOREIGN KEY (resume_id) REFERENCES resumes(id)
             );
+
+            CREATE TABLE IF NOT EXISTS app_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                level TEXT NOT NULL,
+                category TEXT NOT NULL,
+                action TEXT NOT NULL,
+                message TEXT NOT NULL,
+                context_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
             """
         )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_app_events_created_at ON app_events(created_at DESC, id DESC)")
         _ensure_column(conn, "resumes", "file_hash", "TEXT")
         _ensure_column(conn, "resumes", "ai_profile_json", "TEXT")
         _ensure_column(conn, "resumes", "processing_error", "TEXT")
+        _ensure_column(conn, "registries", "file_hash", "TEXT")
+        _ensure_column(conn, "registries", "source_schema", "TEXT")
 
 
 def reset_working_data() -> None:
@@ -104,11 +119,11 @@ def reset_working_data() -> None:
         )
 
 
-def insert_registry(filename: str, file_path: Path) -> int:
+def insert_registry(filename: str, file_path: Path, file_hash: str | None = None, source_schema: str | None = None) -> int:
     with get_connection() as conn:
         cur = conn.execute(
-            "INSERT INTO registries (filename, file_path) VALUES (?, ?)",
-            (filename, str(file_path)),
+            "INSERT INTO registries (filename, file_path, file_hash, source_schema) VALUES (?, ?, ?, ?)",
+            (filename, str(file_path), file_hash, source_schema),
         )
         return int(cur.lastrowid)
 
@@ -203,6 +218,30 @@ def insert_resume(
                 extracted_text,
                 json.dumps(profile, ensure_ascii=False),
                 processing_error,
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def insert_event(
+    level: str,
+    category: str,
+    action: str,
+    message: str,
+    context: dict[str, Any] | None = None,
+) -> int:
+    with get_connection() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO app_events (level, category, action, message, context_json)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                level,
+                category,
+                action,
+                message,
+                json.dumps(context or {}, ensure_ascii=False, default=str),
             ),
         )
         return int(cur.lastrowid)
@@ -337,7 +376,7 @@ def set_manual_match(
 
 
 def fetch_all(table: str) -> list[sqlite3.Row]:
-    if table not in {"registries", "candidates", "resumes", "matches"}:
+    if table not in {"registries", "candidates", "resumes", "matches", "app_events"}:
         raise ValueError("Unsupported table")
     with get_connection() as conn:
         return list(conn.execute(f"SELECT * FROM {table} ORDER BY id"))
@@ -356,6 +395,11 @@ def fetch_resume(resume_db_id: int) -> sqlite3.Row | None:
 def fetch_registry(registry_id: int) -> sqlite3.Row | None:
     with get_connection() as conn:
         return conn.execute("SELECT * FROM registries WHERE id = ?", (registry_id,)).fetchone()
+
+
+def fetch_registry_by_hash(file_hash: str) -> sqlite3.Row | None:
+    with get_connection() as conn:
+        return conn.execute("SELECT * FROM registries WHERE file_hash = ? ORDER BY id DESC LIMIT 1", (file_hash,)).fetchone()
 
 
 def fetch_candidates_with_matches() -> list[sqlite3.Row]:
@@ -383,8 +427,23 @@ def fetch_candidates_with_matches() -> list[sqlite3.Row]:
                 LEFT JOIN matches m ON m.candidate_id = c.id
                 LEFT JOIN resumes r ON r.id = m.resume_id
                 LEFT JOIN registries rg ON rg.id = c.registry_id
-                ORDER BY c.excel_row_number
+                ORDER BY c.registry_id DESC, c.excel_row_number
                 """
+            )
+        )
+
+
+def fetch_recent_events(limit: int = 1000) -> list[sqlite3.Row]:
+    with get_connection() as conn:
+        return list(
+            conn.execute(
+                """
+                SELECT *
+                FROM app_events
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
             )
         )
 

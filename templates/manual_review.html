@@ -33,6 +33,7 @@
       <tr>
         <td class="cell-id"><strong>{{ row.candidate_id }}</strong></td>
         <td>
+          <div class="muted">{{ row.registry_filename or "без названия" }}</div>
           <div>строка Excel: <strong>{{ row.excel_row_number }}</strong></div>
           <a class="file-link" href="/source/registry/{{ row.registry_id }}" target="_blank">открыть исходный реестр</a>
         </td>

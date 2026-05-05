@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import json
 import shutil
 import sqlite3
@@ -12,13 +13,13 @@ from fastapi.templating import Jinja2Templates
 from app import database
 from app.ai_extraction import enrich_resume_with_ai_if_needed, should_use_ai_for_local_profile
 from app.config import BASE_DIR, EXPORT_DIR, REGISTRY_UPLOAD_DIR, RESUME_UPLOAD_DIR, ensure_directories
+from app.diagnostics import EVENT_FILTERS, log_event, recent_events
 from app.exporter import export_enriched_excel
 from app.file_utils import file_sha256
 from app.i18n import reason_label, status_label, warning_label
-from app.matching import run_matching
-from app.matching import copy_matched_resume
+from app.matching import copy_matched_resume, run_matching
 from app.registry import import_registry
-from app.resume_parser import extract_text, parse_resume_profile
+from app.resume_parser import empty_resume_profile, extract_text, parse_resume_profile
 from app.settings import load_settings, save_settings
 
 
@@ -35,6 +36,26 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 def startup() -> None:
     ensure_directories()
     database.init_db()
+    log_event("info", "app", "startup", "Приложение запущено", {"base_dir": str(BASE_DIR)})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    log_event(
+        "error",
+        _category_from_path(request.url.path),
+        "unhandled_exception",
+        str(exc),
+        {
+            "path": request.url.path,
+            "method": request.method,
+            "exception_type": exc.__class__.__name__,
+        },
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Внутренняя ошибка приложения. Откройте раздел «Диагностика» для деталей."},
+    )
 
 
 @app.get("/")
@@ -43,6 +64,7 @@ def dashboard(request: Request):
         "dashboard.html",
         {
             "request": request,
+            "registries_count": len(database.fetch_all("registries")),
             "candidates_count": len(database.fetch_all("candidates")),
             "resumes_count": len(database.fetch_all("resumes")),
             "matches_count": len(database.fetch_all("matches")),
@@ -60,16 +82,39 @@ async def upload_registry(file: UploadFile = File(...)):
     try:
         if not file.filename or not file.filename.lower().endswith((".xlsx", ".xlsm", ".xls")):
             raise HTTPException(status_code=400, detail="Загрузите Excel-файл .xlsx/.xlsm/.xls")
-        database.reset_working_data()
-        target = _store_upload_once(file, REGISTRY_UPLOAD_DIR)
-        import_registry(target, file.filename)
+        stored = _store_upload_once(file, REGISTRY_UPLOAD_DIR)
+        result = import_registry(stored.path, file.filename, file_hash=stored.file_hash)
+        if result["duplicate"]:
+            log_event(
+                "info",
+                "upload",
+                "registry_duplicate_skipped",
+                "Повторный Excel-реестр пропущен",
+                {"filename": file.filename, "file_hash": stored.file_hash},
+            )
+        else:
+            log_event(
+                "info",
+                "upload",
+                "registry_imported",
+                "Реестр импортирован",
+                {
+                    "filename": file.filename,
+                    "file_hash": stored.file_hash,
+                    "rows": result["rows"],
+                    "source_schema": result["source_schema"],
+                    "reused_existing_file": stored.reused_existing,
+                },
+            )
         return RedirectResponse("/", status_code=303)
     except sqlite3.OperationalError as exc:
+        log_event("error", "upload", "registry_db_error", "Ошибка SQLite при импорте реестра", {"detail": str(exc)})
         return JSONResponse(
             status_code=503,
             content={"detail": f"База данных занята. Повторите загрузку через несколько секунд. Детали: {exc}"},
         )
     except ValueError as exc:
+        log_event("error", "upload", "registry_validation_error", "Ошибка Excel-реестра", {"filename": file.filename, "detail": str(exc)})
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
@@ -81,43 +126,103 @@ def upload_resumes_page(request: Request):
 @app.post("/upload-resumes")
 async def upload_resumes(files: list[UploadFile] = File(...)):
     try:
-        allowed = {".pdf", ".docx", ".txt"}
+        allowed = {".pdf", ".docx", ".doc", ".txt"}
         uploaded = 0
+        failed = 0
         for file in files:
             if not file.filename:
                 continue
             suffix = Path(file.filename).suffix.lower()
             if suffix not in allowed:
                 continue
-            target = _store_upload_once(file, RESUME_UPLOAD_DIR)
-            file_hash = file_sha256(target)
-            text = extract_text(target)
-            profile = parse_resume_profile(text, file.filename)
-            resume_id = database.insert_resume(file.filename, target, file_hash, text, profile)
-            uploaded += 1
-            if should_use_ai_for_local_profile(profile):
-                enrich_resume_with_ai_if_needed(
-                    resume_id=resume_id,
-                    file_hash=file_hash,
-                    resume_text=text,
-                    local_profile=profile,
-                    reason="локальное извлечение не нашло ключевые поля",
+            stored = _store_upload_once(file, RESUME_UPLOAD_DIR)
+            try:
+                text = extract_text(stored.path)
+                profile = parse_resume_profile(text, file.filename)
+                resume_id = database.insert_resume(file.filename, stored.path, stored.file_hash, text, profile)
+                uploaded += 1
+                log_event(
+                    "info",
+                    "upload",
+                    "resume_uploaded",
+                    "Резюме обработано локально",
+                    {
+                        "filename": file.filename,
+                        "file_hash": stored.file_hash,
+                        "format": suffix,
+                        "reused_existing_file": stored.reused_existing,
+                    },
+                )
+                if should_use_ai_for_local_profile(profile):
+                    enrich_resume_with_ai_if_needed(
+                        resume_id=resume_id,
+                        file_hash=stored.file_hash,
+                        resume_text=text,
+                        local_profile=profile,
+                        reason="локальное извлечение не нашло ключевые поля",
+                    )
+            except Exception as exc:
+                database.insert_resume(
+                    original_filename=file.filename,
+                    file_path=stored.path,
+                    file_hash=stored.file_hash,
+                    extracted_text="",
+                    profile=empty_resume_profile(file.filename),
+                    processing_error=str(exc),
+                )
+                failed += 1
+                log_event(
+                    "error",
+                    "upload",
+                    "resume_processing_error",
+                    "Ошибка обработки резюме",
+                    {"filename": file.filename, "format": suffix, "detail": str(exc)},
                 )
         if uploaded == 0:
-            return JSONResponse(status_code=400, content={"detail": "Не найдено файлов PDF, DOCX или TXT для загрузки."})
+            if failed:
+                log_event(
+                    "error",
+                    "upload",
+                    "resume_batch_failed",
+                    "Все резюме завершились с ошибкой обработки",
+                    {"files_total": len(files), "failed": failed},
+                )
+                return RedirectResponse("/matching-results", status_code=303)
+            return JSONResponse(status_code=400, content={"detail": "Не найдено файлов PDF, DOC, DOCX или TXT для загрузки."})
+        log_event(
+            "info",
+            "upload",
+            "resume_batch_completed",
+            "Пакет резюме обработан",
+            {"uploaded": uploaded, "failed": failed, "files_total": len(files)},
+        )
         return RedirectResponse("/matching-results", status_code=303)
     except sqlite3.OperationalError as exc:
+        log_event("error", "upload", "resume_db_error", "Ошибка SQLite при загрузке резюме", {"detail": str(exc)})
         return JSONResponse(
             status_code=503,
             content={"detail": f"База данных занята. Повторите загрузку через несколько секунд. Детали: {exc}"},
         )
     except Exception as exc:
+        log_event("error", "upload", "resume_upload_error", "Критическая ошибка загрузки резюме", {"detail": str(exc)})
         return JSONResponse(status_code=400, content={"detail": f"Не удалось обработать резюме: {exc}"})
 
 
 @app.post("/run-matching")
 def run_matching_route():
-    run_matching()
+    results = run_matching()
+    log_event(
+        "info",
+        "matching",
+        "matching_completed",
+        "Сопоставление завершено",
+        {
+            "rows_total": len(results),
+            "matched": sum(1 for item in results if item["status"] == "matched"),
+            "review": sum(1 for item in results if item["status"] == "review"),
+            "unmatched": sum(1 for item in results if item["status"] == "unmatched"),
+        },
+    )
     return RedirectResponse("/matching-results", status_code=303)
 
 
@@ -193,6 +298,13 @@ def update_manual_review(
         )
     else:
         raise HTTPException(status_code=400, detail="Неизвестное действие ручной проверки")
+    log_event(
+        "info",
+        "matching",
+        "manual_review_updated",
+        "Пользователь обновил результат ручной проверки",
+        {"candidate_db_id": candidate_db_id, "action": action, "resume_id": resume_id or None},
+    )
     return RedirectResponse("/manual-review", status_code=303)
 
 
@@ -218,6 +330,24 @@ def _resolve_resume_selection(resume_id: str, resume_query: str):
 def data_quality(request: Request):
     rows = database.fetch_candidates_with_matches()
     return templates.TemplateResponse("data_quality.html", {"request": request, "rows": rows})
+
+
+@app.get("/diagnostics")
+def diagnostics_page(request: Request):
+    filter_name = request.query_params.get("filter", "all")
+    if filter_name not in EVENT_FILTERS:
+        filter_name = "all"
+    rows, counts = recent_events(filter_name=filter_name, limit=1000)
+    return templates.TemplateResponse(
+        "diagnostics.html",
+        {
+            "request": request,
+            "rows": rows,
+            "active_filter": filter_name,
+            "filters": EVENT_FILTERS,
+            "counts": counts,
+        },
+    )
 
 
 @app.get("/settings")
@@ -248,6 +378,18 @@ def update_settings(
         model=model,
         api_key=final_key,
     )
+    log_event(
+        "info",
+        "app",
+        "settings_updated",
+        "Настройки ИИ обновлены",
+        {
+            "enabled": enabled == "on",
+            "provider": provider,
+            "model": model,
+            "key_status": "ключ задан" if final_key else "не задан",
+        },
+    )
     return RedirectResponse("/settings", status_code=303)
 
 
@@ -259,6 +401,7 @@ def export_page(request: Request):
 @app.post("/export")
 def export_file():
     output_path = export_enriched_excel()
+    log_event("info", "export", "export_created", "Сформирован Excel-экспорт", {"filename": output_path.name})
     return RedirectResponse(f"/download/{output_path.name}", status_code=303)
 
 
@@ -306,7 +449,14 @@ def _unique_path(path: Path) -> Path:
         index += 1
 
 
-def _store_upload_once(file: UploadFile, target_dir: Path) -> Path:
+@dataclass
+class StoredUpload:
+    path: Path
+    file_hash: str
+    reused_existing: bool
+
+
+def _store_upload_once(file: UploadFile, target_dir: Path) -> StoredUpload:
     target_dir.mkdir(parents=True, exist_ok=True)
     suffix = Path(file.filename or "upload").suffix
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -317,10 +467,10 @@ def _store_upload_once(file: UploadFile, target_dir: Path) -> Path:
         for existing in target_dir.iterdir():
             if existing.is_file() and file_sha256(existing) == incoming_hash:
                 tmp_path.unlink(missing_ok=True)
-                return existing
+                return StoredUpload(path=existing, file_hash=incoming_hash, reused_existing=True)
         target = _unique_path(target_dir / (file.filename or f"upload{suffix}"))
         shutil.move(str(tmp_path), target)
-        return target
+        return StoredUpload(path=target, file_hash=incoming_hash, reused_existing=False)
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -329,3 +479,13 @@ def _mask_secret(value: str) -> str:
     if not value:
         return "не задан"
     return "ключ задан"
+
+
+def _category_from_path(path: str) -> str:
+    if path.startswith("/upload-"):
+        return "upload"
+    if path.startswith("/run-matching") or path.startswith("/matching") or path.startswith("/manual-review"):
+        return "matching"
+    if path.startswith("/export") or path.startswith("/download"):
+        return "export"
+    return "app"

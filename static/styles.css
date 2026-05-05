@@ -210,7 +210,7 @@ button:disabled {
 
 .stats {
   display: grid;
-  grid-template-columns: 1.15fr .9fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 14px;
   margin-bottom: 22px;
 }
@@ -371,6 +371,7 @@ table {
 .matching-table { min-width: 1060px; }
 .manual-table { min-width: 1280px; }
 .quality-table { min-width: 920px; }
+.diagnostics-table { min-width: 1220px; }
 
 th, td {
   border-bottom: 1px solid var(--line-soft);
@@ -432,6 +433,11 @@ tbody tr:hover {
 .col-actions { width: 286px; }
 .col-recruiter { width: 150px; }
 .col-warnings { width: auto; }
+.col-time { width: 160px; }
+.col-level { width: 110px; }
+.col-action { width: 190px; }
+.col-message { width: 240px; }
+.col-context { width: auto; }
 
 .cell-id {
   font-variant-numeric: tabular-nums;
@@ -512,6 +518,10 @@ tbody tr:hover {
 .badge.matched { background: #d9f4e8; color: var(--ok); }
 .badge.review { background: #fff2c7; color: var(--warn); }
 .badge.unmatched { background: #fde1df; color: var(--bad); }
+.badge-log.error,
+.badge-log.critical { background: #fde1df; color: var(--bad); }
+.badge-log.info { background: #e0f0fb; color: #0f4f7f; }
+.badge-log.warning { background: #fff2c7; color: var(--warn); }
 
 .file-link {
   display: inline-flex;
@@ -633,6 +643,47 @@ ol {
   color: #526174;
   line-height: 1.55;
   font-size: 14px;
+}
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid #d3dee8;
+  border-radius: 999px;
+  background: #f8fbfd;
+  color: #314154;
+  text-decoration: none;
+  font-weight: 750;
+}
+
+.filter-chip span {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.filter-chip.active {
+  border-color: rgba(12, 111, 99, 0.3);
+  background: #eef8f6;
+  color: var(--accent-dark);
+}
+
+.context-json {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #344054;
 }
 
 @media (max-width: 920px) {

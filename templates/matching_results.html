@@ -27,6 +27,7 @@
           <strong>{{ row.excel_row_number }}</strong>
           <span>{{ row.candidate_id }}</span>
           {% if row.registry_id %}
+          <span>{{ row.registry_filename or "источник" }}</span>
           <a class="file-link" href="/source/registry/{{ row.registry_id }}" target="_blank">реестр</a>
           {% endif %}
         </td>

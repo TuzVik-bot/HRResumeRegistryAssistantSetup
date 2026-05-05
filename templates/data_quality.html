@@ -5,16 +5,21 @@
   <table class="data-table quality-table">
     <colgroup>
       <col class="col-candidate">
+      <col class="col-source">
       <col class="col-name">
       <col class="col-status">
       <col class="col-recruiter">
       <col class="col-warnings">
     </colgroup>
-    <thead><tr><th>ID кандидата</th><th>ФИО</th><th>Статус</th><th>Рекрутер</th><th>Предупреждения</th></tr></thead>
+    <thead><tr><th>ID кандидата</th><th>Источник</th><th>ФИО</th><th>Статус</th><th>Рекрутер</th><th>Предупреждения</th></tr></thead>
     <tbody>
       {% for row in rows %}
       <tr>
         <td class="cell-id"><strong>{{ row.candidate_id }}</strong></td>
+        <td>
+          <div class="muted">{{ row.registry_filename or "без названия" }}</div>
+          <div>строка {{ row.excel_row_number }}</div>
+        </td>
         <td>{{ row.full_name or "" }}</td>
         <td>{{ row.status or "" }}</td>
         <td>{{ row.recruiter or "" }}</td>
