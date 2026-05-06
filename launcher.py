@@ -7,6 +7,8 @@ import sys
 import threading
 import tkinter as tk
 from tkinter import ttk
+import urllib.error
+import urllib.request
 import webbrowser
 
 import uvicorn
@@ -14,6 +16,7 @@ import uvicorn
 from app import database
 from app.config import APP_NAME, PROJECT_FILES_DIR, ensure_directories
 from app.diagnostics import log_event
+from app.main import app as _app
 
 
 HOST = "127.0.0.1"
@@ -42,7 +45,7 @@ class ServerThread(threading.Thread):
     def run(self) -> None:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
-        config = uvicorn.Config("app.main:app", host=self.host, port=self.port, log_level="warning")
+        config = uvicorn.Config(_app, host=self.host, port=self.port, log_level="warning")
         self._server = uvicorn.Server(config)
         try:
             self._loop.run_until_complete(self._server.serve())
@@ -121,12 +124,15 @@ class LauncherWindow:
     def start(self) -> None:
         self.status_var.set("Запускаем локальный сервис...")
         self.server_thread.start()
-        self.root.after(1200, self.open_browser)
         self.root.after(500, self._poll_server_state)
         log_event("info", "app", "launcher_started", "Запущено окно Windows-лаунчера", {"url": self.url, "port": self.port})
         self.root.mainloop()
 
     def open_browser(self) -> None:
+        if not _server_accepts_http(self.url):
+            self.status_var.set("Сервис еще запускается. Повторите открытие через пару секунд.")
+            self.root.after(1000, self._poll_server_state)
+            return
         webbrowser.open(self.url)
         if not self.browser_opened:
             self.browser_opened = True
@@ -146,9 +152,18 @@ class LauncherWindow:
         if self.server_thread.error:
             self.status_var.set(f"Ошибка запуска: {self.server_thread.error}")
             return
-        if self.server_thread.is_alive():
-            self.status_var.set("Сервис работает. Можно открыть новый реестр, загрузить резюме или посмотреть диагностику.")
-            self.root.after(800, self._poll_server_state)
+        if not self.server_thread.is_alive():
+            self.status_var.set("Сервис остановлен. Закройте окно и запустите программу заново.")
+            return
+        if _server_accepts_http(self.url):
+            if not self.browser_opened:
+                self.open_browser()
+            else:
+                self.status_var.set("Сервис работает. Можно открыть новый реестр, загрузить резюме или посмотреть диагностику.")
+            self.root.after(1500, self._poll_server_state)
+            return
+        self.status_var.set("Сервис запускается. Если ожидание длится больше минуты, откройте папку данных и проверьте диагностику.")
+        self.root.after(1000, self._poll_server_state)
 
 
 def _open_path(path: Path) -> None:
@@ -157,6 +172,15 @@ def _open_path(path: Path) -> None:
         return
     command = ["open", str(path)] if sys.platform == "darwin" else ["xdg-open", str(path)]
     subprocess.Popen(command)
+
+
+def _server_accepts_http(url: str) -> bool:
+    try:
+        request = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(request, timeout=0.6) as response:
+            return 200 <= response.status < 500
+    except (OSError, urllib.error.URLError):
+        return False
 
 
 def main() -> None:
