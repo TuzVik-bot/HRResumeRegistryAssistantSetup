@@ -1,10 +1,13 @@
 import asyncio
+from datetime import datetime
+import logging
 import os
 from pathlib import Path
 import socket
 import subprocess
 import sys
 import threading
+import traceback
 import tkinter as tk
 from tkinter import ttk
 import urllib.error
@@ -16,12 +19,14 @@ import uvicorn
 from app import database
 from app.config import APP_NAME, PROJECT_FILES_DIR, ensure_directories
 from app.diagnostics import log_event
-from app.main import app as _app
 
 
 HOST = "127.0.0.1"
 START_PORT = 8000
 MAX_PORT = 8010
+LOG_DIR = PROJECT_FILES_DIR / "logs"
+LAUNCHER_LOG_PATH = LOG_DIR / "launcher.log"
+LOG_TAIL_LINES = 80
 
 
 def _find_available_port() -> int:
@@ -43,21 +48,38 @@ class ServerThread(threading.Thread):
         self._server: uvicorn.Server | None = None
 
     def run(self) -> None:
+        _write_launcher_log("Server thread starting")
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
-        config = uvicorn.Config(_app, host=self.host, port=self.port, log_level="warning")
-        self._server = uvicorn.Server(config)
         try:
+            from app.main import app as fastapi_app
+
+            config = uvicorn.Config(
+                fastapi_app,
+                host=self.host,
+                port=self.port,
+                log_level="info",
+                access_log=False,
+                log_config=None,
+            )
+            self._server = uvicorn.Server(config)
             self._loop.run_until_complete(self._server.serve())
+            if self._server and not self._server.should_exit:
+                self.error = RuntimeError("Локальный сервер остановился во время запуска")
+                _write_launcher_log("Server stopped without a shutdown request")
         except Exception as exc:
             self.error = exc
+            _write_launcher_log(f"Server error: {exc}\n{traceback.format_exc()}")
             log_event("error", "app", "launcher_server_error", "Ошибка запуска локального сервера", {"detail": str(exc)})
         finally:
-            pending = asyncio.all_tasks(self._loop)
-            for task in pending:
-                task.cancel()
-            self._loop.run_until_complete(asyncio.sleep(0))
-            self._loop.close()
+            try:
+                pending = asyncio.all_tasks(self._loop)
+                for task in pending:
+                    task.cancel()
+                self._loop.run_until_complete(asyncio.sleep(0))
+            finally:
+                self._loop.close()
+                _write_launcher_log("Server thread stopped")
 
     def stop(self) -> None:
         if self._server and self._loop:
@@ -77,13 +99,14 @@ class LauncherWindow:
 
         self.root = tk.Tk()
         self.root.title("HR Resume Registry Assistant")
-        self.root.geometry("520x260")
-        self.root.minsize(460, 240)
+        self.root.geometry("760x560")
+        self.root.minsize(680, 500)
         self.root.configure(bg="#f3f6f8")
         self.root.protocol("WM_DELETE_WINDOW", self.shutdown)
 
         self.status_var = tk.StringVar(value="Подготовка запуска...")
         self.url_var = tk.StringVar(value=url)
+        self.log_var = tk.StringVar(value=f"Логи запуска: {LAUNCHER_LOG_PATH}")
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -95,11 +118,12 @@ class LauncherWindow:
         style.configure("Title.TLabel", background="#ffffff", foreground="#15202b", font=("Segoe UI", 16, "bold"))
         style.configure("Body.TLabel", background="#ffffff", foreground="#526174", font=("Segoe UI", 10))
         style.configure("Status.TLabel", background="#ffffff", foreground="#0c6f63", font=("Segoe UI", 11, "bold"))
+        style.configure("Error.TLabel", background="#ffffff", foreground="#b42318", font=("Segoe UI", 11, "bold"))
 
-        outer = ttk.Frame(self.root, style="Launcher.TFrame", padding=18)
+        outer = ttk.Frame(self.root, style="Launcher.TFrame", padding=14)
         outer.pack(fill="both", expand=True)
 
-        card = ttk.Frame(outer, style="Card.TFrame", padding=18)
+        card = ttk.Frame(outer, style="Card.TFrame", padding=20)
         card.pack(fill="both", expand=True)
 
         ttk.Label(card, text="HR Resume Registry Assistant", style="Title.TLabel").pack(anchor="w")
@@ -107,24 +131,44 @@ class LauncherWindow:
             card,
             text="Приложение работает локально. Браузер открывается автоматически, а это окно позволяет быстро открыть адрес, папку данных или остановить сервис.",
             style="Body.TLabel",
-            wraplength=460,
+            wraplength=680,
             justify="left",
         ).pack(anchor="w", pady=(10, 12))
 
-        ttk.Label(card, textvariable=self.status_var, style="Status.TLabel").pack(anchor="w")
+        self.status_label = ttk.Label(card, textvariable=self.status_var, style="Status.TLabel", wraplength=680)
+        self.status_label.pack(anchor="w")
         ttk.Label(card, textvariable=self.url_var, style="Body.TLabel").pack(anchor="w", pady=(6, 16))
 
-        button_row = ttk.Frame(card, style="Card.TFrame")
-        button_row.pack(fill="x")
+        button_row = tk.Frame(card, bg="#ffffff")
+        button_row.pack(fill="x", pady=(0, 14))
 
-        ttk.Button(button_row, text="Открыть", command=self.open_browser).pack(side="left")
-        ttk.Button(button_row, text="Папка данных", command=self.open_project_files).pack(side="left", padx=8)
-        ttk.Button(button_row, text="Остановить", command=self.shutdown).pack(side="right")
+        _make_button(button_row, "Открыть сайт", self.open_browser).pack(side="left")
+        _make_button(button_row, "Папка данных", self.open_project_files).pack(side="left", padx=8)
+        _make_button(button_row, "Открыть логи", self.open_logs).pack(side="left")
+        _make_button(button_row, "Остановить", self.shutdown, variant="danger").pack(side="right")
+
+        ttk.Label(card, textvariable=self.log_var, style="Body.TLabel", wraplength=680).pack(anchor="w", pady=(0, 8))
+        self.log_text = tk.Text(
+            card,
+            height=14,
+            wrap="word",
+            bg="#0f1720",
+            fg="#e5edf5",
+            insertbackground="#e5edf5",
+            relief="flat",
+            padx=12,
+            pady=10,
+            font=("Consolas", 9),
+        )
+        self.log_text.pack(fill="both", expand=True)
+        self._refresh_log_text()
 
     def start(self) -> None:
         self.status_var.set("Запускаем локальный сервис...")
+        _write_launcher_log(f"Launcher started. URL: {self.url}")
         self.server_thread.start()
         self.root.after(500, self._poll_server_state)
+        self.root.after(1000, self._refresh_log_text)
         log_event("info", "app", "launcher_started", "Запущено окно Windows-лаунчера", {"url": self.url, "port": self.port})
         self.root.mainloop()
 
@@ -142,20 +186,29 @@ class LauncherWindow:
         ensure_directories()
         _open_path(PROJECT_FILES_DIR)
 
+    def open_logs(self) -> None:
+        _open_path(LAUNCHER_LOG_PATH)
+
     def shutdown(self) -> None:
         self.status_var.set("Останавливаем локальный сервис...")
+        _write_launcher_log("Shutdown requested from launcher window")
         self.server_thread.stop()
         log_event("info", "app", "launcher_shutdown", "Окно launcher закрыто пользователем", {"url": self.url})
-        self.root.after(250, self.root.destroy)
+        self.root.after(600, self.root.destroy)
 
     def _poll_server_state(self) -> None:
         if self.server_thread.error:
-            self.status_var.set(f"Ошибка запуска: {self.server_thread.error}")
+            self.status_label.configure(style="Error.TLabel")
+            self.status_var.set(f"Ошибка запуска: {self.server_thread.error}. Подробности видны ниже и в launcher.log.")
+            self._refresh_log_text()
             return
         if not self.server_thread.is_alive():
+            self.status_label.configure(style="Error.TLabel")
             self.status_var.set("Сервис остановлен. Закройте окно и запустите программу заново.")
+            self._refresh_log_text()
             return
         if _server_accepts_http(self.url):
+            self.status_label.configure(style="Status.TLabel")
             if not self.browser_opened:
                 self.open_browser()
             else:
@@ -165,8 +218,24 @@ class LauncherWindow:
         self.status_var.set("Сервис запускается. Если ожидание длится больше минуты, откройте папку данных и проверьте диагностику.")
         self.root.after(1000, self._poll_server_state)
 
+    def _refresh_log_text(self) -> None:
+        try:
+            lines = LAUNCHER_LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()
+            content = "\n".join(lines[-LOG_TAIL_LINES:])
+        except OSError:
+            content = "Лог запуска пока пуст."
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.insert("1.0", content)
+        self.log_text.see("end")
+        self.log_text.configure(state="disabled")
+        if self.root.winfo_exists():
+            self.root.after(2000, self._refresh_log_text)
+
 
 def _open_path(path: Path) -> None:
+    if path == LAUNCHER_LOG_PATH and not path.exists():
+        _write_launcher_log("Log file created by Open logs action")
     if os.name == "nt":
         os.startfile(str(path))
         return
@@ -183,8 +252,50 @@ def _server_accepts_http(url: str) -> bool:
         return False
 
 
+def _setup_launcher_logging() -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        filename=str(LAUNCHER_LOG_PATH),
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        encoding="utf-8",
+    )
+    _write_launcher_log("Launcher logging initialized")
+
+
+def _write_launcher_log(message: str) -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    line = f"{datetime.now().isoformat(timespec='seconds')} {message}\n"
+    try:
+        with LAUNCHER_LOG_PATH.open("a", encoding="utf-8") as log_file:
+            log_file.write(line)
+    except OSError:
+        pass
+    logging.info(message)
+
+
+def _make_button(parent, text: str, command, variant: str = "default") -> tk.Button:
+    bg = "#0c6f63" if variant == "default" else "#b42318"
+    active_bg = "#084c44" if variant == "default" else "#8f1f17"
+    return tk.Button(
+        parent,
+        text=text,
+        command=command,
+        width=14,
+        height=2,
+        bg=bg,
+        fg="#ffffff",
+        activebackground=active_bg,
+        activeforeground="#ffffff",
+        relief="flat",
+        font=("Segoe UI", 10, "bold"),
+        cursor="hand2",
+    )
+
+
 def main() -> None:
     ensure_directories()
+    _setup_launcher_logging()
     database.init_db()
     port = _find_available_port()
     url = f"http://{HOST}:{port}"
