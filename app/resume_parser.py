@@ -11,6 +11,14 @@ from docx import Document
 from app.skills import extract_skills, flatten_skills
 from app.text_utils import normalize_phone
 
+try:
+    from striprtf.striprtf import rtf_to_text as _rtf_to_text
+    _HAS_STRIPRTF = True
+except ImportError:
+    _HAS_STRIPRTF = False
+
+OCR_MIN_CHARS = 150  # PDFs with fewer chars are treated as scanned
+
 
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+", re.IGNORECASE)
 PHONE_RE = re.compile(r"(?:\+?\d[\s()\-]*){9,16}")
@@ -24,9 +32,18 @@ def extract_text(file_path: Path) -> str:
         return _extract_docx(file_path)
     if suffix == ".doc":
         return _extract_doc(file_path)
+    if suffix == ".rtf":
+        return _extract_rtf(file_path)
+    if suffix in (".odt",):
+        return _extract_odt_fallback(file_path)
     if suffix == ".txt":
         return file_path.read_text(encoding="utf-8", errors="ignore")
     raise ValueError(f"Unsupported resume format: {suffix}")
+
+
+def needs_ocr(text: str) -> bool:
+    """Return True when extracted PDF text is too short to be useful (likely a scan)."""
+    return len(text.strip()) < OCR_MIN_CHARS
 
 
 def parse_resume_profile(text: str, filename: str = "") -> dict[str, object]:
@@ -168,16 +185,48 @@ def _append_text(parts: list[str], text: str) -> None:
         parts.append(cleaned)
 
 
+def _extract_rtf(file_path: Path) -> str:
+    if _HAS_STRIPRTF:
+        raw = file_path.read_bytes()
+        for enc in ("utf-8", "cp1251", "latin-1"):
+            try:
+                return _rtf_to_text(raw.decode(enc, errors="replace"))
+            except Exception:
+                continue
+    # Fallback: try LibreOffice if striprtf not available
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        soffice = _find_soffice_path()
+        if not soffice:
+            raise RuntimeError("Для файлов .rtf установите striprtf или LibreOffice")
+        converted = _convert_via_soffice(file_path, Path(tmp_dir), "docx")
+        return _extract_docx(converted)
+
+
+def _extract_odt_fallback(file_path: Path) -> str:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        soffice = _find_soffice_path()
+        if not soffice:
+            raise RuntimeError("Для файлов .odt требуется установленный LibreOffice")
+        converted = _convert_via_soffice(file_path, Path(tmp_dir), "docx")
+        return _extract_docx(converted)
+
+
 def _convert_doc_to_docx(file_path: Path, output_dir: Path) -> Path:
     soffice_path = _find_soffice_path()
     if not soffice_path:
         raise RuntimeError("Для файлов .doc требуется установленный LibreOffice")
+    return _convert_via_soffice(file_path, output_dir, "docx")
 
+
+def _convert_via_soffice(file_path: Path, output_dir: Path, target_fmt: str) -> Path:
+    soffice_path = _find_soffice_path()
+    if not soffice_path:
+        raise RuntimeError(f"LibreOffice не найден — конвертация {file_path.suffix} невозможна")
     command = [
         str(soffice_path),
         "--headless",
         "--convert-to",
-        "docx",
+        target_fmt,
         "--outdir",
         str(output_dir),
         str(file_path),
@@ -186,18 +235,18 @@ def _convert_doc_to_docx(file_path: Path, output_dir: Path) -> Path:
         completed = subprocess.run(command, capture_output=True, text=True, check=True)
     except subprocess.CalledProcessError as exc:
         message = exc.stderr.strip() or exc.stdout.strip() or "неизвестная ошибка конвертации"
-        raise RuntimeError(f"Не удалось конвертировать .doc через LibreOffice: {message[:240]}") from exc
+        raise RuntimeError(f"Не удалось конвертировать {file_path.suffix} через LibreOffice: {message[:240]}") from exc
 
-    converted = output_dir / f"{file_path.stem}.docx"
+    converted = output_dir / f"{file_path.stem}.{target_fmt}"
     if converted.exists():
         return converted
 
-    candidates = sorted(output_dir.glob("*.docx"))
+    candidates = sorted(output_dir.glob(f"*.{target_fmt}"))
     if candidates:
         return candidates[0]
 
     output = (completed.stdout or completed.stderr or "").strip()
-    raise RuntimeError(f"LibreOffice не создал .docx-файл: {output[:240]}")
+    raise RuntimeError(f"LibreOffice не создал .{target_fmt}-файл: {output[:240]}")
 
 
 def _find_soffice_path() -> Path | None:

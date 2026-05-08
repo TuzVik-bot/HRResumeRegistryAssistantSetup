@@ -6,8 +6,9 @@ from typing import Any
 from rapidfuzz import fuzz
 
 from app import database
-from app.ai_extraction import enrich_resume_with_ai_if_needed
+from app.ai_extraction import enrich_resume_with_ai_if_needed, match_candidate_with_llm
 from app.config import MATCHED_RESUME_DIR
+from app.settings import load_settings
 from app.registry import COLUMN_ALIASES, map_columns
 from app.skills import extract_skills, flatten_skills
 from app.text_utils import name_variants, normalize_phone, normalize_text, safe_filename
@@ -66,9 +67,20 @@ def score_candidate_resume(candidate: dict[str, Any], resume: dict[str, Any]) ->
 
 def run_matching() -> list[dict[str, Any]]:
     MATCHED_RESUME_DIR.mkdir(parents=True, exist_ok=True)
+    settings = load_settings()
+    thresh_auto = int(settings.get("MATCH_THRESHOLD_AUTO", "90"))
+    thresh_review = int(settings.get("MATCH_THRESHOLD_REVIEW", "70"))
+    gap_min = int(settings.get("MATCH_GAP_MIN", "10"))
+    ai_enabled = settings.get("AI_EXTRACTION_ENABLED", "false").lower() == "true"
+    api_key = settings.get("AI_API_KEY", "").strip()
+    model = settings.get("AI_MODEL", "gemini-1.5-flash").strip() or "gemini-1.5-flash"
+    llm_fallback_enabled = settings.get("LLM_FALLBACK_FOR_UNMATCHED", "true").lower() == "true"
+    llm_max = int(settings.get("LLM_FALLBACK_MAX_CANDIDATES", "50"))
+
     candidates = [_candidate_from_row(row) for row in database.fetch_all("candidates")]
     resumes = [_resume_from_row(row) for row in database.fetch_all("resumes")]
     results = []
+    llm_fallback_used = 0
     for candidate in candidates:
         scored = []
         for resume in resumes:
@@ -77,25 +89,48 @@ def run_matching() -> list[dict[str, Any]]:
         scored.sort(key=lambda item: item[0], reverse=True)
         best = scored[0] if scored else (0.0, "резюме не загружены", None)
         second_score = scored[1][0] if len(scored) > 1 else 0.0
-        status = classify_match(best[0], second_score)
-        if status == "review" and best[2]:
-            enhanced_profile, processing_error = enrich_resume_with_ai_if_needed(
-                resume_id=best[2]["db_id"],
-                file_hash=best[2].get("file_hash", ""),
-                resume_text=best[2].get("extracted_text", ""),
-                local_profile=best[2]["profile"],
-                reason="результат сопоставления требует ручной проверки",
-            )
-            if enhanced_profile != best[2]["profile"]:
-                best[2]["profile"] = enhanced_profile
-                rescored_score, rescored_reason = score_candidate_resume(candidate, best[2])
-                best = (rescored_score, f"{rescored_reason}; AI уточнил профиль", best[2])
-                scored[0] = best
-                scored.sort(key=lambda item: item[0], reverse=True)
-                second_score = scored[1][0] if len(scored) > 1 else 0.0
-                status = classify_match(best[0], second_score)
-            elif processing_error:
-                best = (best[0], f"{best[1]}; processing_error: {processing_error}", best[2])
+        status = classify_match(best[0], second_score, thresh_auto, thresh_review, gap_min)
+
+        # AI profile enrichment for review and unmatched
+        if ai_enabled and api_key and best[2] and best[2].get("extracted_text"):
+            if status in ("review", "unmatched"):
+                enhanced_profile, processing_error = enrich_resume_with_ai_if_needed(
+                    resume_id=best[2]["db_id"],
+                    file_hash=best[2].get("file_hash", ""),
+                    resume_text=best[2].get("extracted_text", ""),
+                    local_profile=best[2]["profile"],
+                    reason="результат сопоставления требует уточнения",
+                )
+                if enhanced_profile != best[2]["profile"]:
+                    best[2]["profile"] = enhanced_profile
+                    rescored_score, rescored_reason = score_candidate_resume(candidate, best[2])
+                    best = (rescored_score, f"{rescored_reason}; AI уточнил профиль", best[2])
+                    scored[0] = best
+                    scored.sort(key=lambda item: item[0], reverse=True)
+                    second_score = scored[1][0] if len(scored) > 1 else 0.0
+                    status = classify_match(best[0], second_score, thresh_auto, thresh_review, gap_min)
+                elif processing_error:
+                    best = (best[0], f"{best[1]}; processing_error: {processing_error}", best[2])
+
+        # LLM direct matching for still-unmatched candidates
+        if status == "unmatched" and ai_enabled and api_key and llm_fallback_enabled and llm_fallback_used < llm_max:
+            top_for_llm = [r for (_, _, r) in scored[:5] if r and r.get("extracted_text")]
+            if top_for_llm:
+                llm_fallback_used += 1
+                matched_id, confidence, llm_reason = match_candidate_with_llm(
+                    candidate=candidate,
+                    top_resumes=top_for_llm,
+                    api_key=api_key,
+                    model=model,
+                )
+                if matched_id is not None and confidence >= 0.6:
+                    llm_resume = next((r for (_, _, r) in scored if r and r["db_id"] == matched_id), None)
+                    if llm_resume:
+                        llm_score = max(best[0], thresh_review)
+                        best = (llm_score, f"LLM-matching (уверенность {confidence:.0%}): {llm_reason}", llm_resume)
+                        second_score = scored[1][0] if len(scored) > 1 else 0.0
+                        status = classify_match(best[0], second_score, thresh_auto, thresh_review, gap_min)
+
         resume = best[2] if best[2] and status != "unmatched" else None
         output_path = None
         new_filename = None
@@ -117,11 +152,17 @@ def run_matching() -> list[dict[str, Any]]:
     return results
 
 
-def classify_match(score: float, second_score: float) -> str:
+def classify_match(
+    score: float,
+    second_score: float,
+    threshold_auto: int = 90,
+    threshold_review: int = 70,
+    gap_min: int = 10,
+) -> str:
     gap = score - second_score
-    if score >= 90 and gap >= 10:
+    if score >= threshold_auto and gap >= gap_min:
         return "matched"
-    if score >= 70:
+    if score >= threshold_review:
         return "review"
     return "unmatched"
 

@@ -10,8 +10,8 @@
   <form action="/upload-resumes" method="post" enctype="multipart/form-data" class="upload-form" data-upload-form>
     <div class="field">
       <label>Файлы резюме</label>
-      <input type="file" name="files" accept=".pdf,.doc,.docx,.txt" multiple required>
-      <p class="field-help">Можно выбрать сразу несколько файлов. Поддерживаются PDF, DOC, DOCX и TXT.</p>
+      <input type="file" name="files" accept=".pdf,.doc,.docx,.rtf,.odt,.txt" multiple required>
+      <p class="field-help">Можно выбрать сразу несколько файлов. Поддерживаются PDF, DOC, DOCX, RTF, ODT и TXT.</p>
     </div>
     <button type="submit">Загрузить резюме</button>
     <div class="upload-progress" data-upload-progress hidden>
@@ -22,6 +22,18 @@
       <div class="progress-track"><div class="progress-fill" data-upload-bar></div></div>
     </div>
   </form>
-  <p class="muted">Поддерживаемые форматы: PDF, DOC, DOCX, TXT. Для старых DOC используется установленный LibreOffice.</p>
+  <p class="muted">Поддерживаемые форматы: PDF, DOC, DOCX, RTF, ODT, TXT. Для .doc/.odt требуется LibreOffice. Для сканированных PDF — включите OCR в <a href="/settings">Настройках</a>.</p>
+</section>
+
+<section class="panel" id="scan" style="margin-top: 1.5rem">
+  <h2 style="margin-top:0">Сканировать папку с резюме</h2>
+  <form action="/scan-folder" method="post" class="upload-form">
+    <div class="field">
+      <label>Путь к папке</label>
+      <input type="text" name="folder_path" placeholder="C:\Users\HR\Резюме" required style="font-family:monospace">
+      <p class="field-help">Программа рекурсивно обойдёт все подпапки и добавит все PDF, DOC, DOCX, RTF, ODT и TXT файлы.</p>
+    </div>
+    <button type="submit">Сканировать папку</button>
+  </form>
 </section>
 {% endblock %}

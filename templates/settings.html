@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
-<header class="page-header"><h1>Настройки ИИ-извлечения</h1></header>
+<header class="page-header"><h1>Настройки</h1></header>
 <section class="panel">
   <form action="/settings" method="post" class="upload-form">
+    <h2 style="margin-top:0">ИИ-извлечение (Gemini)</h2>
     <label class="checkbox-row">
       <input type="checkbox" name="enabled" {% if settings.AI_EXTRACTION_ENABLED == "true" %}checked{% endif %}>
       Включить ИИ-извлечение
@@ -23,8 +24,38 @@
     <label>API-ключ</label>
     <input type="password" name="api_key" placeholder="{{ api_key_mask }}">
 
+    <label class="checkbox-row">
+      <input type="checkbox" name="ocr_fallback_enabled" {% if settings.OCR_FALLBACK_ENABLED != "false" %}checked{% endif %}>
+      OCR для сканированных PDF (через Gemini Vision, требует API-ключ)
+    </label>
+
+    <label class="checkbox-row">
+      <input type="checkbox" name="llm_fallback_for_unmatched" {% if settings.LLM_FALLBACK_FOR_UNMATCHED != "false" %}checked{% endif %}>
+      LLM-matching для кандидатов без совпадений
+    </label>
+
+    <label>Макс. кандидатов для LLM-matching (экономия токенов)</label>
+    <input type="number" name="llm_fallback_max_candidates" min="1" max="500"
+           value="{{ settings.LLM_FALLBACK_MAX_CANDIDATES or '50' }}">
+
+    <hr style="margin: 1.5rem 0">
+    <h2>Пороги сопоставления</h2>
+    <p class="muted">На «грязных» данных снизьте пороги до 55–65 чтобы больше совпадений попадало в «Проверить».</p>
+
+    <label>Порог «Совпадение» (авто, балл ≥)</label>
+    <input type="number" name="match_threshold_auto" min="50" max="100"
+           value="{{ settings.MATCH_THRESHOLD_AUTO or '90' }}">
+
+    <label>Порог «Проверить» (балл ≥)</label>
+    <input type="number" name="match_threshold_review" min="30" max="95"
+           value="{{ settings.MATCH_THRESHOLD_REVIEW or '70' }}">
+
+    <label>Минимальный отрыв от второго совпадения</label>
+    <input type="number" name="match_gap_min" min="0" max="50"
+           value="{{ settings.MATCH_GAP_MIN or '10' }}">
+
     <button type="submit">Сохранить настройки</button>
   </form>
-  <p class="muted">Ключ хранится только локально в файле .env. ИИ вызывается только при слабом локальном извлечении или статусе сопоставления "проверить". В запрос отправляются только первые 6000 символов текста резюме.</p>
+  <p class="muted">Ключ хранится только локально в файле .env. ИИ вызывается при слабом локальном извлечении, статусе «проверить» или «не найдено». В запрос отправляются только первые 6000 символов текста резюме.</p>
 </section>
 {% endblock %}

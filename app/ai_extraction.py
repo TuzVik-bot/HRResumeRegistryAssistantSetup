@@ -1,7 +1,9 @@
+import base64
 import json
 import re
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -180,3 +182,115 @@ def _strict_json_loads(text: str) -> dict[str, Any]:
 
 class AIExtractionError(Exception):
     pass
+
+
+def extract_text_via_gemini_vision(pdf_path: Path, api_key: str, model: str) -> str:
+    """Extract text from a scanned PDF using Gemini Vision by sending page images."""
+    try:
+        import fitz  # PyMuPDF already in requirements
+    except ImportError:
+        raise AIExtractionError("PyMuPDF не установлен — OCR невозможен")
+
+    parts: list[dict[str, Any]] = [{"text": "Извлеки весь текст из этого резюме. Верни только текст, без форматирования, JSON и Markdown."}]
+    with fitz.open(pdf_path) as doc:
+        for page_num, page in enumerate(doc):
+            if page_num >= 5:  # cap at 5 pages to save tokens
+                break
+            pix = page.get_pixmap(dpi=150)
+            img_bytes = pix.tobytes("png")
+            parts.append({
+                "inline_data": {
+                    "mime_type": "image/png",
+                    "data": base64.b64encode(img_bytes).decode("utf-8"),
+                }
+            })
+
+    if len(parts) == 1:
+        return ""
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    payload = {
+        "contents": [{"parts": parts}],
+        "generationConfig": {"temperature": 0},
+    }
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.URLError as exc:
+        raise AIExtractionError(str(exc)) from exc
+    return _extract_gemini_text(data)
+
+
+def match_candidate_with_llm(
+    candidate: dict[str, Any],
+    top_resumes: list[dict[str, Any]],
+    api_key: str,
+    model: str,
+) -> tuple[int | None, float, str]:
+    """Ask Gemini to identify which of the top_resumes belongs to the candidate.
+
+    Returns (resume_db_id or None, confidence 0.0-1.0, reason string).
+    """
+    if not top_resumes:
+        return None, 0.0, "нет резюме для проверки"
+
+    candidate_info = (
+        f"ФИО: {candidate.get('full_name', '')}\n"
+        f"Вакансия: {candidate.get('vacancy', '')}"
+    )
+    row_data = candidate.get("row_data", {})
+    for val in row_data.values():
+        s = str(val or "").strip()
+        if "@" in s:
+            candidate_info += f"\nEmail: {s}"
+            break
+    for val in row_data.values():
+        s = str(val or "").strip()
+        if any(c.isdigit() for c in s) and len(s) >= 7:
+            candidate_info += f"\nКонтакт: {s}"
+            break
+
+    resume_blocks = []
+    for idx, res in enumerate(top_resumes):
+        text_snippet = (res.get("extracted_text") or "")[:1500]
+        fname = res.get("original_filename", "")
+        resume_blocks.append(f"--- Резюме {idx} (файл: {fname}) ---\n{text_snippet}")
+
+    prompt = (
+        "Ты HR-ассистент. Определи, в каком из резюме ниже описан кандидат из реестра.\n\n"
+        f"Кандидат:\n{candidate_info}\n\n"
+        + "\n\n".join(resume_blocks)
+        + "\n\nВерни ТОЛЬКО строгий JSON без Markdown:\n"
+        '{"resume_index": <0-based index или null если не найдено>, "confidence": <0.0-1.0>, "reason": "<краткое пояснение>"}'
+    )
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
+    }
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        text = _extract_gemini_text(data)
+        result = _strict_json_loads(text)
+        idx = result.get("resume_index")
+        confidence = float(result.get("confidence", 0.0))
+        reason = str(result.get("reason", ""))
+        if idx is not None and 0 <= int(idx) < len(top_resumes):
+            return top_resumes[int(idx)]["db_id"], confidence, reason
+        return None, confidence, reason
+    except (AIExtractionError, ValueError, KeyError, TypeError, urllib.error.URLError) as exc:
+        return None, 0.0, f"LLM matching error: {exc}"

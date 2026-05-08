@@ -11,6 +11,12 @@ DEFAULT_SETTINGS = {
     "AI_PROVIDER": "gemini",
     "AI_MODEL": "gemini-3-flash-preview",
     "AI_API_KEY": "",
+    "MATCH_THRESHOLD_AUTO": "90",
+    "MATCH_THRESHOLD_REVIEW": "70",
+    "MATCH_GAP_MIN": "10",
+    "OCR_FALLBACK_ENABLED": "true",
+    "LLM_FALLBACK_FOR_UNMATCHED": "true",
+    "LLM_FALLBACK_MAX_CANDIDATES": "50",
 }
 
 
@@ -26,7 +32,18 @@ def load_settings() -> dict[str, str]:
     return values
 
 
-def save_settings(enabled: bool, provider: str, api_key: str, model: str = "gemini-3-flash-preview") -> None:
+def save_settings(
+    enabled: bool,
+    provider: str,
+    api_key: str,
+    model: str = "gemini-3-flash-preview",
+    match_threshold_auto: int = 90,
+    match_threshold_review: int = 70,
+    match_gap_min: int = 10,
+    ocr_fallback_enabled: bool = True,
+    llm_fallback_for_unmatched: bool = True,
+    llm_fallback_max_candidates: int = 50,
+) -> None:
     provider = provider.strip() or "gemini"
     model = model.strip() or "gemini-3-flash-preview"
     settings = {
@@ -34,6 +51,12 @@ def save_settings(enabled: bool, provider: str, api_key: str, model: str = "gemi
         "AI_PROVIDER": provider,
         "AI_MODEL": model,
         "AI_API_KEY": api_key.strip(),
+        "MATCH_THRESHOLD_AUTO": str(match_threshold_auto),
+        "MATCH_THRESHOLD_REVIEW": str(match_threshold_review),
+        "MATCH_GAP_MIN": str(match_gap_min),
+        "OCR_FALLBACK_ENABLED": "true" if ocr_fallback_enabled else "false",
+        "LLM_FALLBACK_FOR_UNMATCHED": "true" if llm_fallback_for_unmatched else "false",
+        "LLM_FALLBACK_MAX_CANDIDATES": str(llm_fallback_max_candidates),
     }
     lines = [f"{key}={value}" for key, value in settings.items()]
     ENV_PATH.parent.mkdir(parents=True, exist_ok=True)

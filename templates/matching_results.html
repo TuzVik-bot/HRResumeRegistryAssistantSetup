@@ -4,6 +4,33 @@
   <h1>Результаты сопоставления</h1>
   <form action="/run-matching" method="post"><button type="submit">Запустить сопоставление</button></form>
 </header>
+
+{% set unmatched_count = rows | selectattr("match_status", "equalto", "unmatched") | list | length %}
+{% set review_count = rows | selectattr("match_status", "equalto", "review") | list | length %}
+{% set no_resume_count = rows | selectattr("resume_id", "none") | list | length %}
+
+{% if request.query_params.get("scan_uploaded") %}
+<div class="banner banner-info" style="margin-bottom:1rem; padding:0.75rem 1rem; background:#e8f4fd; border-left:4px solid #2196f3; border-radius:4px">
+  Сканирование папки завершено: загружено {{ request.query_params.get("scan_uploaded") }},
+  ошибок {{ request.query_params.get("scan_failed", 0) }},
+  пропущено (неподдерживаемый формат) {{ request.query_params.get("scan_skipped", 0) }}.
+</div>
+{% endif %}
+
+{% if unmatched_count > 0 or no_resume_count > 0 %}
+<div class="banner banner-warn" style="margin-bottom:1rem; padding:0.75rem 1rem; background:#fff8e1; border-left:4px solid #ff9800; border-radius:4px">
+  <strong>Диагностика совпадений:</strong>
+  {% if no_resume_count > 0 %}
+    <span style="margin-right:1rem">⚠ {{ no_resume_count }} кандидат(ов) без резюме — <a href="/upload-resumes">загрузите резюме</a> или <a href="/upload-resumes#scan">сканируйте папку</a></span>
+  {% endif %}
+  {% if unmatched_count > 0 %}
+    <span style="margin-right:1rem">⚠ {{ unmatched_count }} не найдено — попробуйте снизить пороги в <a href="/settings">Настройках</a> или включите LLM-matching</span>
+  {% endif %}
+  {% if review_count > 0 %}
+    <span>ℹ {{ review_count }} требуют <a href="/manual-review">ручной проверки</a></span>
+  {% endif %}
+</div>
+{% endif %}
 <section class="table-wrap table-wrap-results">
   <table class="data-table matching-table">
     <colgroup>
