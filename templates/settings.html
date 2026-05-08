@@ -29,18 +29,9 @@
       OCR для сканированных PDF (через Gemini Vision, требует API-ключ)
     </label>
 
-    <label class="checkbox-row">
-      <input type="checkbox" name="llm_fallback_for_unmatched" {% if settings.LLM_FALLBACK_FOR_UNMATCHED != "false" %}checked{% endif %}>
-      LLM-matching для кандидатов без совпадений
-    </label>
-
-    <label>Макс. кандидатов для LLM-matching (экономия токенов)</label>
-    <input type="number" name="llm_fallback_max_candidates" min="1" max="500"
-           value="{{ settings.LLM_FALLBACK_MAX_CANDIDATES or '50' }}">
-
     <hr style="margin: 1.5rem 0">
     <h2>Пороги сопоставления</h2>
-    <p class="muted">На «грязных» данных снизьте пороги до 55–65 чтобы больше совпадений попадало в «Проверить».</p>
+    <p class="muted">Сопоставление выполняется локально и сравнивает только имя и фамилию, включая кириллицу, латиницу и транслитерацию.</p>
 
     <label>Порог «Совпадение» (авто, балл ≥)</label>
     <input type="number" name="match_threshold_auto" min="50" max="100"
@@ -56,6 +47,6 @@
 
     <button type="submit">Сохранить настройки</button>
   </form>
-  <p class="muted">Ключ хранится только локально в файле .env. ИИ вызывается при слабом локальном извлечении, статусе «проверить» или «не найдено». В запрос отправляются только первые 6000 символов текста резюме.</p>
+  <p class="muted">Ключ хранится только локально в файле .env. ИИ используется для извлечения данных при загрузке резюме и OCR сканированных PDF; массовое сопоставление не делает сетевых запросов и работает локально.</p>
 </section>
 {% endblock %}

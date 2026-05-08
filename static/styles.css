@@ -251,6 +251,30 @@ button:disabled {
   padding: 22px;
 }
 
+.section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.section-head p {
+  margin: 0;
+}
+
+.unmatched-resumes-panel {
+  margin-bottom: 22px;
+}
+
+.compact-table-wrap {
+  box-shadow: none;
+}
+
+.unmatched-resumes-table {
+  min-width: 760px;
+}
+
 .upload-panel {
   max-width: 720px;
 }

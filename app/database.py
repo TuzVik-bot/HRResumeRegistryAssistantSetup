@@ -320,18 +320,49 @@ def upsert_match(match: dict[str, Any]) -> None:
                 needs_manual_review=excluded.needs_manual_review,
                 created_at=CURRENT_TIMESTAMP
             """,
-            (
-                match["candidate_db_id"],
-                match.get("resume_db_id"),
-                match["score"],
-                match.get("second_score", 0),
-                match["status"],
-                match["reason"],
-                match.get("new_filename"),
-                match.get("output_path"),
-                1 if match.get("needs_manual_review") else 0,
-            ),
+            _match_values(match),
         )
+
+
+def upsert_matches_bulk(matches: list[dict[str, Any]]) -> None:
+    if not matches:
+        return
+    values = [_match_values(match) for match in matches]
+    with get_connection() as conn:
+        conn.executemany(
+            """
+            INSERT INTO matches (
+                candidate_id, resume_id, score, second_score, status, reason,
+                new_filename, output_path, needs_manual_review
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(candidate_id) DO UPDATE SET
+                resume_id=excluded.resume_id,
+                score=excluded.score,
+                second_score=excluded.second_score,
+                status=excluded.status,
+                reason=excluded.reason,
+                new_filename=excluded.new_filename,
+                output_path=excluded.output_path,
+                needs_manual_review=excluded.needs_manual_review,
+                created_at=CURRENT_TIMESTAMP
+            """,
+            values,
+        )
+
+
+def _match_values(match: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        match["candidate_db_id"],
+        match.get("resume_db_id"),
+        match["score"],
+        match.get("second_score", 0),
+        match["status"],
+        match["reason"],
+        match.get("new_filename"),
+        match.get("output_path"),
+        1 if match.get("needs_manual_review") else 0,
+    )
 
 
 def set_manual_match(
@@ -428,6 +459,30 @@ def fetch_candidates_with_matches() -> list[sqlite3.Row]:
                 LEFT JOIN resumes r ON r.id = m.resume_id
                 LEFT JOIN registries rg ON rg.id = c.registry_id
                 ORDER BY c.registry_id DESC, c.excel_row_number
+                """
+            )
+        )
+
+
+def fetch_resumes_without_registry_matches() -> list[sqlite3.Row]:
+    with get_connection() as conn:
+        return list(
+            conn.execute(
+                """
+                SELECT
+                    r.id,
+                    r.original_filename,
+                    r.file_path,
+                    r.processing_error,
+                    r.created_at
+                FROM resumes r
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM matches m
+                    WHERE m.resume_id = r.id
+                      AND m.status IN ('matched', 'review')
+                )
+                ORDER BY r.created_at DESC, r.original_filename COLLATE NOCASE
                 """
             )
         )

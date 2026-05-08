@@ -433,11 +433,13 @@ def diagnostics_page(request: Request):
     if filter_name not in EVENT_FILTERS:
         filter_name = "all"
     rows, counts = recent_events(filter_name=filter_name, limit=1000)
+    unmatched_resumes = database.fetch_resumes_without_registry_matches()
     return templates.TemplateResponse(
         "diagnostics.html",
         {
             "request": request,
             "rows": rows,
+            "unmatched_resumes": unmatched_resumes,
             "active_filter": filter_name,
             "filters": EVENT_FILTERS,
             "counts": counts,
@@ -482,7 +484,7 @@ def update_settings(
         match_threshold_review=match_threshold_review,
         match_gap_min=match_gap_min,
         ocr_fallback_enabled=ocr_fallback_enabled == "on",
-        llm_fallback_for_unmatched=llm_fallback_for_unmatched == "on",
+        llm_fallback_for_unmatched=False,
         llm_fallback_max_candidates=llm_fallback_max_candidates,
     )
     log_event(

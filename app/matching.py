@@ -6,63 +6,26 @@ from typing import Any
 from rapidfuzz import fuzz
 
 from app import database
-from app.ai_extraction import enrich_resume_with_ai_if_needed, match_candidate_with_llm
 from app.config import MATCHED_RESUME_DIR
 from app.settings import load_settings
-from app.registry import COLUMN_ALIASES, map_columns
-from app.skills import extract_skills, flatten_skills
-from app.text_utils import name_variants, normalize_phone, normalize_text, safe_filename
+from app.text_utils import name_variants, normalize_text, safe_filename
+
+
+MIN_NAME_REVIEW_SCORE = 70
 
 
 def score_candidate_resume(candidate: dict[str, Any], resume: dict[str, Any]) -> tuple[float, str]:
-    row_data = candidate.get("row_data", {})
-    columns = list(row_data.keys())
     profile = resume.get("profile", {})
-    reasons: list[str] = []
-    score = 0.0
-
-    email_candidate = _find_email(row_data)
-    if email_candidate and email_candidate.lower() == str(profile.get("email", "")).lower():
-        score += 30
-        reasons.append("точное совпадение email (+30)")
-
-    phone_candidate = normalize_phone(_find_phone(row_data))
-    if phone_candidate and phone_candidate == profile.get("phone"):
-        score += 25
-        reasons.append("точное совпадение телефона (+25)")
-
-    name_score = _name_score(candidate.get("full_name", ""), str(profile.get("full_name_original", "")))
-    score += name_score * 0.40
-    reasons.append(f"transliteration: совпадение ФИО {name_score:.0f}/100 (+{name_score * 0.40:.0f})")
-
-    vacancy = candidate.get("vacancy") or ""
-    position = str(profile.get("current_position", ""))
-    vacancy_score = _vacancy_score(vacancy, position)
-    score += vacancy_score * 0.20
-    if vacancy_score:
-        reasons.append(f"embedded vacancy: сходство вакансии и позиции {vacancy_score:.0f}/100 (+{vacancy_score * 0.20:.0f})")
-
-    recruiter_text = _recruiter_signal_text(row_data, columns)
-    recruiter_skills = set(flatten_skills(extract_skills(recruiter_text)))
-    cv_skills = set(profile.get("key_skills") or [])
-    overlap = recruiter_skills & cv_skills
-    if recruiter_skills:
-        skill_score = min(32, 32 * len(overlap) / max(len(recruiter_skills), 1))
-        score += skill_score
-        overlap_text = ", ".join(sorted(overlap, key=str.lower)) or "нет"
-        reasons.append(f"overlapping skills: {len(overlap)}/{len(recruiter_skills)} ({overlap_text}) (+{skill_score:.0f})")
-
-    company_score, company_reason = _company_score(row_data, str(profile.get("current_company", "")))
-    score += company_score
-    if company_score:
-        reasons.append(f"совпадение компании {company_reason} (+{company_score:.0f})")
-
-    filename_score = fuzz.token_set_ratio(normalize_text(candidate.get("full_name", "")), normalize_text(resume.get("original_filename", "")))
-    score += filename_score * 0.05
-    if filename_score:
-        reasons.append(f"сходство имени файла {filename_score:.0f}/100 (+{filename_score * 0.05:.0f})")
-
-    return min(score, 100), "; ".join(reasons) or "нет сильных сигналов"
+    candidate_name = candidate.get("full_name", "")
+    resume_name = str(profile.get("full_name_original", ""))
+    if not _has_two_name_parts(candidate_name):
+        return 0.0, "ФИО в реестре не заполнено полностью"
+    if not _has_two_name_parts(resume_name):
+        return 0.0, f"ФИО в резюме не распознано полностью: '{resume_name}'"
+    name_score = _name_score_for_records(candidate, resume)
+    if name_score < MIN_NAME_REVIEW_SCORE:
+        return 0.0, f"ФИО не совпадает: реестр '{candidate_name}', резюме '{resume_name}'"
+    return min(name_score, 100), f"ФИО/транслитерация: совпадение {name_score:.0f}/100"
 
 
 def run_matching() -> list[dict[str, Any]]:
@@ -71,16 +34,10 @@ def run_matching() -> list[dict[str, Any]]:
     thresh_auto = int(settings.get("MATCH_THRESHOLD_AUTO", "90"))
     thresh_review = int(settings.get("MATCH_THRESHOLD_REVIEW", "70"))
     gap_min = int(settings.get("MATCH_GAP_MIN", "10"))
-    ai_enabled = settings.get("AI_EXTRACTION_ENABLED", "false").lower() == "true"
-    api_key = settings.get("AI_API_KEY", "").strip()
-    model = settings.get("AI_MODEL", "gemini-1.5-flash").strip() or "gemini-1.5-flash"
-    llm_fallback_enabled = settings.get("LLM_FALLBACK_FOR_UNMATCHED", "true").lower() == "true"
-    llm_max = int(settings.get("LLM_FALLBACK_MAX_CANDIDATES", "50"))
 
     candidates = [_candidate_from_row(row) for row in database.fetch_all("candidates")]
     resumes = [_resume_from_row(row) for row in database.fetch_all("resumes")]
     results = []
-    llm_fallback_used = 0
     for candidate in candidates:
         scored = []
         for resume in resumes:
@@ -90,46 +47,6 @@ def run_matching() -> list[dict[str, Any]]:
         best = scored[0] if scored else (0.0, "резюме не загружены", None)
         second_score = scored[1][0] if len(scored) > 1 else 0.0
         status = classify_match(best[0], second_score, thresh_auto, thresh_review, gap_min)
-
-        # AI profile enrichment for review and unmatched
-        if ai_enabled and api_key and best[2] and best[2].get("extracted_text"):
-            if status in ("review", "unmatched"):
-                enhanced_profile, processing_error = enrich_resume_with_ai_if_needed(
-                    resume_id=best[2]["db_id"],
-                    file_hash=best[2].get("file_hash", ""),
-                    resume_text=best[2].get("extracted_text", ""),
-                    local_profile=best[2]["profile"],
-                    reason="результат сопоставления требует уточнения",
-                )
-                if enhanced_profile != best[2]["profile"]:
-                    best[2]["profile"] = enhanced_profile
-                    rescored_score, rescored_reason = score_candidate_resume(candidate, best[2])
-                    best = (rescored_score, f"{rescored_reason}; AI уточнил профиль", best[2])
-                    scored[0] = best
-                    scored.sort(key=lambda item: item[0], reverse=True)
-                    second_score = scored[1][0] if len(scored) > 1 else 0.0
-                    status = classify_match(best[0], second_score, thresh_auto, thresh_review, gap_min)
-                elif processing_error:
-                    best = (best[0], f"{best[1]}; processing_error: {processing_error}", best[2])
-
-        # LLM direct matching for still-unmatched candidates
-        if status == "unmatched" and ai_enabled and api_key and llm_fallback_enabled and llm_fallback_used < llm_max:
-            top_for_llm = [r for (_, _, r) in scored[:5] if r and r.get("extracted_text")]
-            if top_for_llm:
-                llm_fallback_used += 1
-                matched_id, confidence, llm_reason = match_candidate_with_llm(
-                    candidate=candidate,
-                    top_resumes=top_for_llm,
-                    api_key=api_key,
-                    model=model,
-                )
-                if matched_id is not None and confidence >= 0.6:
-                    llm_resume = next((r for (_, _, r) in scored if r and r["db_id"] == matched_id), None)
-                    if llm_resume:
-                        llm_score = max(best[0], thresh_review)
-                        best = (llm_score, f"LLM-matching (уверенность {confidence:.0%}): {llm_reason}", llm_resume)
-                        second_score = scored[1][0] if len(scored) > 1 else 0.0
-                        status = classify_match(best[0], second_score, thresh_auto, thresh_review, gap_min)
 
         resume = best[2] if best[2] and status != "unmatched" else None
         output_path = None
@@ -147,8 +64,8 @@ def run_matching() -> list[dict[str, Any]]:
             "output_path": str(output_path) if output_path else None,
             "needs_manual_review": status != "matched",
         }
-        database.upsert_match(match)
         results.append(match)
+    database.upsert_matches_bulk(results)
     return results
 
 
@@ -186,77 +103,48 @@ def _candidate_from_row(row: Any) -> dict[str, Any]:
         "vacancy": row["vacancy"] or "",
         "status": row["status"] or "",
         "row_data": json.loads(row["row_data_json"]),
+        "name_variants": name_variants(row["full_name"] or ""),
+        "name_parts_count": len(_name_tokens(row["full_name"] or "")),
     }
 
 
 def _resume_from_row(row: Any) -> dict[str, Any]:
+    profile = json.loads(row["profile_json"])
+    full_name = str(profile.get("full_name_original", ""))
     return {
         "db_id": row["id"],
         "original_filename": row["original_filename"],
         "file_path": row["file_path"],
         "file_hash": row["file_hash"] or "",
         "extracted_text": row["extracted_text"] or "",
-        "profile": json.loads(row["profile_json"]),
+        "profile": profile,
+        "name_variants": name_variants(full_name),
+        "name_parts_count": len(_name_tokens(full_name)),
     }
 
 
 def _name_score(candidate_name: str, resume_name: str) -> float:
     candidate_variants = name_variants(candidate_name)
     resume_variants = name_variants(resume_name)
+    return _name_score_from_variants(candidate_variants, resume_variants)
+
+
+def _name_score_for_records(candidate: dict[str, Any], resume: dict[str, Any]) -> float:
+    candidate_variants = candidate.get("name_variants") or name_variants(candidate.get("full_name", ""))
+    resume_variants = resume.get("name_variants") or name_variants(str(resume.get("profile", {}).get("full_name_original", "")))
+    return _name_score_from_variants(candidate_variants, resume_variants)
+
+
+def _name_score_from_variants(candidate_variants: set[str], resume_variants: set[str]) -> float:
     if not candidate_variants or not resume_variants:
         return 0
     return max(fuzz.token_sort_ratio(a, b) for a in candidate_variants for b in resume_variants)
 
 
-def _find_email(row_data: dict[str, Any]) -> str:
-    for value in row_data.values():
-        text = str(value or "")
-        if "@" in text:
-            return text.strip()
-    return ""
+def _has_two_name_parts(value: str | None) -> bool:
+    return len(_name_tokens(value)) >= 2
 
 
-def _find_phone(row_data: dict[str, Any]) -> str:
-    for value in row_data.values():
-        phone = normalize_phone(str(value or ""))
-        if len(phone) >= 10:
-            return phone
-    return ""
-
-
-def _vacancy_score(vacancy: str, position: str) -> float:
-    normalized_vacancy = normalize_text(vacancy)
-    normalized_position = normalize_text(position)
-    score = fuzz.token_set_ratio(normalized_vacancy, normalized_position)
-    embedded_terms = {"embedded", "stm32", "esp32", "rtos", "freertos", "linux"}
-    if "embedded" in normalized_position and (
-        "embedded" in normalized_vacancy or "programmist" in normalized_vacancy or "программист" in vacancy.lower()
-    ):
-        score = max(score, 100)
-    if embedded_terms & set(normalized_vacancy.split()) and embedded_terms & set(normalized_position.split()):
-        score = max(score, 90)
-    return score
-
-
-def _recruiter_signal_text(row_data: dict[str, Any], columns: list[str]) -> str:
-    comment_aliases = {normalize_text(alias) for alias in COLUMN_ALIASES.get("recruiter_comment", [])}
-    parts = []
-    for col in columns:
-        col_norm = normalize_text(col)
-        if col_norm in comment_aliases or "otsenka" in col_norm or "poisk" in col_norm or "коммент" in col.lower():
-            parts.append(str(row_data.get(col) or ""))
-    return " ".join(parts)
-
-
-def _company_score(row_data: dict[str, Any], company: str) -> tuple[float, str]:
-    if not company:
-        return 0, ""
-    normalized_company = normalize_text(company)
-    company_alias = normalized_company.replace("jsc ", "").replace("ojsc ", "").strip()
-    for value in row_data.values():
-        normalized_value = normalize_text(str(value or ""))
-        if normalized_company and normalized_company in normalized_value:
-            return 10, company
-        if company_alias and company_alias in normalized_value:
-            return 10, company_alias
-    return 0, ""
+def _name_tokens(value: str | None) -> list[str]:
+    normalized = normalize_text(value)
+    return [token for token in normalized.split() if token and not token.isdigit()]

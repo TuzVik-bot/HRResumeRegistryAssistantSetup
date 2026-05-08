@@ -100,11 +100,7 @@ def call_gemini_resume_extraction(api_key: str, model: str, resume_text: str, re
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except urllib.error.URLError as exc:
-        raise AIExtractionError(str(exc)) from exc
+    data = _post_gemini_json(request, timeout=30)
     text = _extract_gemini_text(data)
     parsed = AIResumeProfile.model_validate(_strict_json_loads(text))
     return parsed.model_dump()
@@ -219,11 +215,7 @@ def extract_text_via_gemini_vision(pdf_path: Path, api_key: str, model: str) -> 
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except urllib.error.URLError as exc:
-        raise AIExtractionError(str(exc)) from exc
+    data = _post_gemini_json(request, timeout=60)
     return _extract_gemini_text(data)
 
 
@@ -240,21 +232,7 @@ def match_candidate_with_llm(
     if not top_resumes:
         return None, 0.0, "нет резюме для проверки"
 
-    candidate_info = (
-        f"ФИО: {candidate.get('full_name', '')}\n"
-        f"Вакансия: {candidate.get('vacancy', '')}"
-    )
-    row_data = candidate.get("row_data", {})
-    for val in row_data.values():
-        s = str(val or "").strip()
-        if "@" in s:
-            candidate_info += f"\nEmail: {s}"
-            break
-    for val in row_data.values():
-        s = str(val or "").strip()
-        if any(c.isdigit() for c in s) and len(s) >= 7:
-            candidate_info += f"\nКонтакт: {s}"
-            break
+    candidate_info = f"ФИО: {candidate.get('full_name', '')}"
 
     resume_blocks = []
     for idx, res in enumerate(top_resumes):
@@ -263,7 +241,9 @@ def match_candidate_with_llm(
         resume_blocks.append(f"--- Резюме {idx} (файл: {fname}) ---\n{text_snippet}")
 
     prompt = (
-        "Ты HR-ассистент. Определи, в каком из резюме ниже описан кандидат из реестра.\n\n"
+        "Ты HR-ассистент. Определи, в каком из резюме ниже то же ФИО, что у кандидата из реестра.\n"
+        "Сравнивай только имя и фамилию: кириллица, латиница и транслитерация допустимы.\n"
+        "Игнорируй вакансии, навыки, компании, контакты и любые другие признаки.\n\n"
         f"Кандидат:\n{candidate_info}\n\n"
         + "\n\n".join(resume_blocks)
         + "\n\nВерни ТОЛЬКО строгий JSON без Markdown:\n"
@@ -282,8 +262,7 @@ def match_candidate_with_llm(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            data = json.loads(response.read().decode("utf-8"))
+        data = _post_gemini_json(request, timeout=30)
         text = _extract_gemini_text(data)
         result = _strict_json_loads(text)
         idx = result.get("resume_index")
@@ -292,5 +271,17 @@ def match_candidate_with_llm(
         if idx is not None and 0 <= int(idx) < len(top_resumes):
             return top_resumes[int(idx)]["db_id"], confidence, reason
         return None, confidence, reason
-    except (AIExtractionError, ValueError, KeyError, TypeError, urllib.error.URLError) as exc:
+    except (AIExtractionError, ValueError, KeyError, TypeError) as exc:
         return None, 0.0, f"LLM matching error: {exc}"
+
+
+def _post_gemini_json(request: urllib.request.Request, timeout: int) -> dict[str, Any]:
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except TimeoutError as exc:
+        raise AIExtractionError(f"Gemini request timed out after {timeout} seconds") from exc
+    except urllib.error.URLError as exc:
+        raise AIExtractionError(str(exc)) from exc
+    except OSError as exc:
+        raise AIExtractionError(str(exc)) from exc

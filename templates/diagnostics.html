@@ -12,6 +12,49 @@
   <div><strong>{{ counts.errors }}</strong><span>Ошибки</span></div>
   <div><strong>{{ counts.upload }}</strong><span>Загрузки</span></div>
   <div><strong>{{ counts.matching + counts.export }}</strong><span>Сопоставление и экспорт</span></div>
+  <div><strong>{{ unmatched_resumes|length }}</strong><span>Резюме без совпадения в реестре</span></div>
+</section>
+
+<section class="panel unmatched-resumes-panel">
+  <div class="section-head">
+    <div>
+      <h2>Резюме без совпадения в реестре</h2>
+      <p class="muted">Файлы, которые не привязаны ни к одной строке реестра как совпадение или ручная проверка.</p>
+    </div>
+  </div>
+  {% if unmatched_resumes %}
+  <div class="table-wrap compact-table-wrap">
+    <table class="data-table unmatched-resumes-table">
+      <thead>
+        <tr>
+          <th>Файл резюме</th>
+          <th>Загружено</th>
+          <th>Обработка</th>
+          <th>Действие</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for resume in unmatched_resumes %}
+        <tr>
+          <td>{{ resume.original_filename }}</td>
+          <td>{{ resume.created_at }}</td>
+          <td>
+            {% if resume.processing_error %}
+            <span class="badge unmatched">ошибка</span>
+            <div class="reason-cell">{{ resume.processing_error }}</div>
+            {% else %}
+            <span class="muted">обработано</span>
+            {% endif %}
+          </td>
+          <td><a href="/source/resume/{{ resume.id }}">Открыть</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Все загруженные резюме сейчас имеют совпадение или строку на ручной проверке.</p>
+  {% endif %}
 </section>
 
 <section class="panel">

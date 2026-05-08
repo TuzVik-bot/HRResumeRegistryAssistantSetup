@@ -1,4 +1,5 @@
-from app.matching import classify_match, score_candidate_resume
+from app import config, database, matching, settings
+from app.matching import classify_match, run_matching, score_candidate_resume
 from tests.fixtures.sample_candidates import (
     ARBUZAU_RESUME,
     ARBUZOV_CANDIDATE,
@@ -7,7 +8,7 @@ from tests.fixtures.sample_candidates import (
 )
 
 
-def test_matching_score_uses_name_vacancy_and_skills():
+def test_matching_score_uses_only_name_transliteration():
     candidate = {
         "full_name": "Арбузов Глеб",
         "vacancy": "Embedded Software Engineer",
@@ -29,9 +30,9 @@ def test_matching_score_uses_name_vacancy_and_skills():
         },
     }
     score, reason = score_candidate_resume(candidate, resume)
-    assert score >= 55
-    assert "transliteration" in reason
-    assert "overlapping skills" in reason
+    assert score >= 90
+    assert "ФИО/транслитерация" in reason
+    assert "overlapping skills" not in reason
 
 
 def test_classify_match_thresholds_and_gap():
@@ -45,18 +46,17 @@ def test_sample_candidate_arbuzov_matches_hleb_arbuzau_resume():
     confidence, reason = score_candidate_resume(ARBUZOV_CANDIDATE, ARBUZAU_RESUME)
     assert classify_match(confidence, 0) == "matched"
     assert confidence >= 90
-    assert "transliteration" in reason
-    assert "Peleng" in reason or "peleng" in reason
-    assert "embedded vacancy" in reason
-    assert "overlapping skills" in reason
+    assert "ФИО/транслитерация" in reason
+    assert "embedded vacancy" not in reason
+    assert "overlapping skills" not in reason
 
 
 def test_sample_candidate_chechukha_matches_vitali_chachukha_resume():
     confidence, reason = score_candidate_resume(CHACHUKHA_CANDIDATE, CHACHUKHA_RESUME)
     assert classify_match(confidence, 0) == "matched"
     assert confidence >= 90
-    assert "transliteration" in reason
-    assert "overlapping skills" in reason
+    assert "ФИО/транслитерация" in reason
+    assert "overlapping skills" not in reason
 
 
 def test_match_does_not_depend_on_resume_filename():
@@ -68,3 +68,126 @@ def test_match_does_not_depend_on_resume_filename():
     assert classify_match(confidence, 0) == "matched"
     assert confidence >= 90
     assert "сходство имени файла" not in reason or "document_001" not in reason
+
+
+def test_clear_name_conflict_blocks_skill_only_review_match():
+    candidate = {
+        "full_name": "Екатерина Федорова",
+        "vacancy": "BA",
+        "row_data": {
+            "Фамилия, имя": "Екатерина Федорова",
+            "вакансия": "BA",
+            "оценка рекрутера": "embedded, embedded вакансии, анализ требований",
+        },
+    }
+    resume = {
+        "original_filename": "Стрижевич Дарья.pdf",
+        "profile": {
+            "full_name_original": "Стрижевич Дарья",
+            "email": "",
+            "phone": "",
+            "current_position": "BA Embedded",
+            "current_company": "",
+            "key_skills": ["embedded"],
+        },
+    }
+
+    confidence, reason = score_candidate_resume(candidate, resume)
+
+    assert confidence == 0
+    assert classify_match(confidence, 0) == "unmatched"
+    assert "ФИО не совпадает" in reason
+
+
+def test_exact_contact_does_not_override_name_conflict():
+    candidate = {
+        "full_name": "Екатерина Федорова",
+        "vacancy": "BA",
+        "row_data": {
+            "Фамилия, имя": "Екатерина Федорова",
+            "Email": "candidate@example.com",
+            "вакансия": "BA",
+        },
+    }
+    resume = {
+        "original_filename": "Стрижевич Дарья.pdf",
+        "profile": {
+            "full_name_original": "Стрижевич Дарья",
+            "email": "candidate@example.com",
+            "phone": "",
+            "current_position": "BA",
+            "current_company": "",
+            "key_skills": [],
+        },
+    }
+
+    confidence, reason = score_candidate_resume(candidate, resume)
+
+    assert confidence == 0
+    assert "ФИО не совпадает" in reason
+
+
+def test_same_name_in_transliteration_matches_without_other_signals():
+    candidate = {
+        "full_name": "Стрижевич Дарья",
+        "vacancy": "BA",
+        "row_data": {"Фамилия, имя": "Стрижевич Дарья"},
+    }
+    resume = {
+        "original_filename": "random.pdf",
+        "profile": {
+            "full_name_original": "Darya Strizhevich",
+            "email": "",
+            "phone": "",
+            "current_position": "Other role",
+            "current_company": "",
+            "key_skills": [],
+        },
+    }
+
+    confidence, reason = score_candidate_resume(candidate, resume)
+
+    assert confidence >= 90
+    assert "ФИО/транслитерация" in reason
+
+
+def test_run_matching_stays_local_even_when_ai_is_enabled(isolated_project_files, monkeypatch):
+    monkeypatch.setattr(matching, "MATCHED_RESUME_DIR", config.MATCHED_RESUME_DIR)
+    database.init_db()
+    settings.save_settings(
+        enabled=True,
+        provider="gemini",
+        api_key="test-key",
+        model="gemini-test",
+        llm_fallback_for_unmatched=True,
+        llm_fallback_max_candidates=200,
+    )
+    registry_id = database.insert_registry("registry.xlsx", config.REGISTRY_UPLOAD_DIR / "registry.xlsx")
+    database.insert_candidate(
+        registry_id=registry_id,
+        excel_row_number=2,
+        candidate_id="REG-2",
+        row_data={"ФИО": "Екатерина Федорова"},
+        full_name="Екатерина Федорова",
+        vacancy="BA",
+        status="",
+        recruiter="",
+        quality_warnings=[],
+    )
+    database.insert_resume(
+        original_filename="Strizhevich_Darya.pdf",
+        file_path=config.RESUME_UPLOAD_DIR / "Strizhevich_Darya.pdf",
+        file_hash="resume-hash",
+        extracted_text="Darya Strizhevich BA embedded",
+        profile={"full_name_original": "Darya Strizhevich"},
+    )
+
+    def fail_if_network_is_used(*args, **kwargs):
+        raise AssertionError("matching must not call AI/network")
+
+    monkeypatch.setattr("app.ai_extraction.urllib.request.urlopen", fail_if_network_is_used)
+
+    results = run_matching()
+
+    assert results[0]["status"] == "unmatched"
+    assert results[0]["resume_db_id"] is None

@@ -24,7 +24,7 @@
     <span style="margin-right:1rem">⚠ {{ no_resume_count }} кандидат(ов) без резюме — <a href="/upload-resumes">загрузите резюме</a> или <a href="/upload-resumes#scan">сканируйте папку</a></span>
   {% endif %}
   {% if unmatched_count > 0 %}
-    <span style="margin-right:1rem">⚠ {{ unmatched_count }} не найдено — попробуйте снизить пороги в <a href="/settings">Настройках</a> или включите LLM-matching</span>
+    <span style="margin-right:1rem">⚠ {{ unmatched_count }} не найдено — проверьте написание ФИО в реестре и резюме</span>
   {% endif %}
   {% if review_count > 0 %}
     <span>ℹ {{ review_count }} требуют <a href="/manual-review">ручной проверки</a></span>
