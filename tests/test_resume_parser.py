@@ -54,17 +54,16 @@ def test_get_soffice_status_reports_env_path(tmp_path, monkeypatch):
     assert status == {"available": True, "path": str(soffice)}
 
 
-def test_extract_doc_reports_missing_libreoffice(tmp_path, monkeypatch):
+def test_extract_doc_without_libreoffice_falls_back_to_filename_profile(tmp_path, monkeypatch):
     source_path = tmp_path / "legacy.doc"
     source_path.write_bytes(b"legacy doc placeholder")
     monkeypatch.setattr(resume_parser, "_find_soffice_path", lambda: None)
 
-    try:
-        resume_parser.extract_text(source_path)
-    except RuntimeError as exc:
-        assert "LibreOffice" in str(exc)
-    else:
-        raise AssertionError("Expected RuntimeError when LibreOffice is missing")
+    text = resume_parser.extract_text(source_path)
+    profile = resume_parser.parse_resume_profile(text, "Юрченко Анна Владимировна.doc")
+
+    assert text == ""
+    assert profile["full_name_original"] == "Юрченко Анна Владимировна"
 
 
 def test_filename_only_profile_uses_doc_filename_when_libreoffice_missing():

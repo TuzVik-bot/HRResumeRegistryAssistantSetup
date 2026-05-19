@@ -117,6 +117,8 @@ def _extract_docx(file_path: Path) -> str:
 
 
 def _extract_doc(file_path: Path) -> str:
+    if not _find_soffice_path():
+        return ""
     with tempfile.TemporaryDirectory() as tmp_dir:
         converted = _convert_doc_to_docx(file_path, Path(tmp_dir))
         return _extract_docx(converted)
