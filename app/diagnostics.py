@@ -14,6 +14,7 @@ EVENT_FILTERS = {
     "export": "Экспорт",
 }
 RESUME_ERROR_ACTIONS = {"resume_processing_error", "resume_batch_failed", "resume_scan_error"}
+LEGACY_DOC_LIBREOFFICE_DETAIL = "Для файлов .doc требуется установленный LibreOffice"
 
 _SENSITIVE_KEY_MARKERS = {
     "api_key",
@@ -68,6 +69,10 @@ def resume_error_report(limit: int = 1000) -> list[dict[str, Any]]:
         if row["action"] not in RESUME_ERROR_ACTIONS:
             continue
         context = _parse_context(row["context_json"])
+        if row["action"] == "resume_processing_error" and context.get("format") == ".doc":
+            detail = str(context.get("detail", ""))
+            if "LibreOffice" in detail:
+                continue
         report.append(
             {
                 "created_at": row["created_at"],

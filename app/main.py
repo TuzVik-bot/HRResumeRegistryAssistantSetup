@@ -51,6 +51,7 @@ MATCHING_PROGRESS = {
 def startup() -> None:
     ensure_directories()
     database.init_db()
+    _repair_legacy_doc_resume_errors()
     log_event("info", "app", "startup", "Приложение запущено", {"base_dir": str(BASE_DIR)})
 
 
@@ -371,6 +372,7 @@ def scan_folder(folder_path: str = Form(...)):
 
 @app.post("/run-matching")
 def run_matching_route():
+    _repair_legacy_doc_resume_errors()
     _set_matching_progress("running", 0, 0, "Сопоставление выполняется")
     try:
         results = run_matching()
@@ -752,6 +754,29 @@ def _set_matching_progress(state: str, current: int, total: int, message: str) -
 
 def _can_use_filename_only_doc_profile(suffix: str, exc: Exception) -> bool:
     return suffix == ".doc" and "LibreOffice" in str(exc)
+
+
+def _repair_legacy_doc_resume_errors() -> int:
+    repaired = 0
+    for row in database.fetch_all("resumes"):
+        filename = row["original_filename"] or ""
+        if Path(filename).suffix.lower() != ".doc":
+            continue
+        error = row["processing_error"] or ""
+        if "LibreOffice" not in error:
+            continue
+        profile = parse_resume_profile("", filename)
+        database.update_resume_profile(row["id"], profile, processing_error=None)
+        repaired += 1
+    if repaired:
+        log_event(
+            "info",
+            "upload",
+            "resume_doc_errors_repaired",
+            "Старые DOC-ошибки LibreOffice переведены в профиль по имени файла",
+            {"repaired": repaired},
+        )
+    return repaired
 
 
 def _file_sha256_with_retry(file_path: Path) -> str:

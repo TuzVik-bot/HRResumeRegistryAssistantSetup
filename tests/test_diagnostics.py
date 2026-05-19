@@ -120,7 +120,7 @@ def test_resume_error_report_includes_processing_and_batch_failures(isolated_pro
         "upload",
         "resume_processing_error",
         "Ошибка обработки резюме",
-        {"filename": "candidate.doc", "format": ".doc", "detail": "LibreOffice не найден"},
+        {"filename": "candidate.pdf", "format": ".pdf", "detail": "PDF поврежден"},
     )
     log_event(
         "error",
@@ -135,7 +135,7 @@ def test_resume_error_report_includes_processing_and_batch_failures(isolated_pro
 
     actions = [row["action"] for row in rows]
     assert actions == ["resume_batch_failed", "resume_processing_error"]
-    assert rows[1]["filename"] == "candidate.doc"
+    assert rows[1]["filename"] == "candidate.pdf"
     assert rows[0]["failed"] == 2
 
 
@@ -146,7 +146,7 @@ def test_diagnostics_csv_exports_resume_errors(isolated_project_files):
         "upload",
         "resume_processing_error",
         "Ошибка обработки резюме",
-        {"filename": "candidate.doc", "format": ".doc", "detail": "LibreOffice не найден"},
+        {"filename": "candidate.pdf", "format": ".pdf", "detail": "PDF поврежден"},
     )
     log_event("info", "upload", "registry_imported", "Реестр импортирован", {"filename": "registry.xlsx"})
 
@@ -155,7 +155,7 @@ def test_diagnostics_csv_exports_resume_errors(isolated_project_files):
 
     assert response.status_code == 200
     assert "text/csv" in response.media_type
-    assert "candidate.doc" in body
+    assert "candidate.pdf" in body
     assert "resume_processing_error" in body
     assert "registry_imported" not in body
 
@@ -182,7 +182,7 @@ def test_matching_results_context_contains_resume_error_summary(isolated_project
 
     response = main.matching_results(request)
 
-    assert response.context["resume_error_summary"]["count"] == 1
+    assert response.context["resume_error_summary"]["count"] == 0
 
 
 def test_matching_progress_endpoint_defaults_to_idle():
@@ -250,3 +250,22 @@ def test_cloud_file_error_detection_and_fallback_hash(tmp_path):
 
     assert main._is_cloud_file_access_error(OSError("[WinError 362] OneDrive provider error"))
     assert main._fallback_source_hash(file_path) == main._fallback_source_hash(file_path)
+
+
+def test_legacy_doc_libreoffice_errors_are_repaired(isolated_project_files):
+    database.init_db()
+    resume_id = database.insert_resume(
+        original_filename="Юрченко Анна Владимировна.doc",
+        file_path=config.RESUME_UPLOAD_DIR / "Юрченко Анна Владимировна.doc",
+        file_hash="legacy-doc",
+        extracted_text="",
+        profile={"full_name_original": ""},
+        processing_error="Для файлов .doc требуется установленный LibreOffice",
+    )
+
+    repaired = main._repair_legacy_doc_resume_errors()
+    resume = database.fetch_resume(resume_id)
+
+    assert repaired == 1
+    assert resume["processing_error"] is None
+    assert "Юрченко Анна Владимировна" in resume["profile_json"]
