@@ -215,3 +215,8 @@ def test_run_matching_route_updates_progress_on_failure(monkeypatch):
         pass
 
     assert main.MATCHING_PROGRESS["state"] == "failed"
+
+
+def test_missing_libreoffice_doc_can_use_filename_only_profile():
+    assert main._can_use_filename_only_doc_profile(".doc", RuntimeError("Для файлов .doc требуется установленный LibreOffice"))
+    assert not main._can_use_filename_only_doc_profile(".docx", RuntimeError("Для файлов .doc требуется установленный LibreOffice"))

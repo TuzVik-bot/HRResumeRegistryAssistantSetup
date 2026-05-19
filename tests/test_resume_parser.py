@@ -65,3 +65,9 @@ def test_extract_doc_reports_missing_libreoffice(tmp_path, monkeypatch):
         assert "LibreOffice" in str(exc)
     else:
         raise AssertionError("Expected RuntimeError when LibreOffice is missing")
+
+
+def test_filename_only_profile_uses_doc_filename_when_libreoffice_missing():
+    profile = resume_parser.parse_resume_profile("", "Юрченко Анна Владимировна.doc")
+
+    assert profile["full_name_original"] == "Юрченко Анна Владимировна"

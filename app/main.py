@@ -183,6 +183,23 @@ async def upload_resumes(files: list[UploadFile] = File(...)):
                         reason="локальное извлечение не нашло ключевые поля",
                     )
             except Exception as exc:
+                if _can_use_filename_only_doc_profile(suffix, exc):
+                    profile = parse_resume_profile("", file.filename)
+                    resume_id = database.insert_resume(file.filename, stored.path, stored.file_hash, "", profile)
+                    uploaded += 1
+                    log_event(
+                        "warn",
+                        "upload",
+                        "resume_doc_filename_only",
+                        "DOC сохранен без извлечения текста — используется ФИО из имени файла",
+                        {
+                            "filename": file.filename,
+                            "format": suffix,
+                            "detail": str(exc),
+                            "resume_id": resume_id,
+                        },
+                    )
+                    continue
                 database.insert_resume(
                     original_filename=file.filename,
                     file_path=stored.path,
@@ -282,6 +299,23 @@ def scan_folder(folder_path: str = Form(...)):
                     reason="локальное извлечение не нашло ключевые поля",
                 )
         except Exception as exc:
+            if _can_use_filename_only_doc_profile(suffix, exc):
+                profile = parse_resume_profile("", file_path.name)
+                resume_id = database.insert_resume(file_path.name, stored.path, stored.file_hash, "", profile)
+                uploaded += 1
+                log_event(
+                    "warn",
+                    "upload",
+                    "resume_doc_filename_only",
+                    "DOC из папки сохранен без извлечения текста — используется ФИО из имени файла",
+                    {
+                        "filename": file_path.name,
+                        "format": suffix,
+                        "detail": str(exc),
+                        "resume_id": resume_id,
+                    },
+                )
+                continue
             database.insert_resume(
                 original_filename=file_path.name,
                 file_path=stored.path,
@@ -691,6 +725,10 @@ def _set_matching_progress(state: str, current: int, total: int, message: str) -
             "message": message,
         }
     )
+
+
+def _can_use_filename_only_doc_profile(suffix: str, exc: Exception) -> bool:
+    return suffix == ".doc" and "LibreOffice" in str(exc)
 
 
 def _category_from_path(path: str) -> str:
