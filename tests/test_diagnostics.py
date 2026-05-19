@@ -220,3 +220,33 @@ def test_run_matching_route_updates_progress_on_failure(monkeypatch):
 def test_missing_libreoffice_doc_can_use_filename_only_profile():
     assert main._can_use_filename_only_doc_profile(".doc", RuntimeError("Для файлов .doc требуется установленный LibreOffice"))
     assert not main._can_use_filename_only_doc_profile(".docx", RuntimeError("Для файлов .doc требуется установленный LibreOffice"))
+
+
+def test_scan_folder_uses_filename_only_profile_for_onedrive_placeholder(isolated_project_files, tmp_path, monkeypatch):
+    database.init_db()
+    folder = tmp_path / "OneDrive"
+    folder.mkdir()
+    resume_path = folder / "Иванов Иван Иванович.pdf"
+    resume_path.write_text("placeholder", encoding="utf-8")
+
+    def fail_to_copy(file_path, target_dir):
+        raise OSError("[WinError 362] Файл доступен только в облаке OneDrive")
+
+    monkeypatch.setattr(main, "_store_disk_file_once", fail_to_copy)
+
+    response = main.scan_folder(str(folder))
+    resumes = database.fetch_all("resumes")
+
+    assert response.status_code == 303
+    assert len(resumes) == 1
+    assert resumes[0]["original_filename"] == "Иванов Иван Иванович.pdf"
+    assert "Иванов Иван Иванович" in resumes[0]["profile_json"]
+    assert resumes[0]["processing_error"] is None
+
+
+def test_cloud_file_error_detection_and_fallback_hash(tmp_path):
+    file_path = tmp_path / "candidate.pdf"
+    file_path.write_text("placeholder", encoding="utf-8")
+
+    assert main._is_cloud_file_access_error(OSError("[WinError 362] OneDrive provider error"))
+    assert main._fallback_source_hash(file_path) == main._fallback_source_hash(file_path)

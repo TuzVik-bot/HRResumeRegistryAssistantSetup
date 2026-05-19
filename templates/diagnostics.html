@@ -12,7 +12,7 @@
   <div><strong>{{ counts.errors }}</strong><span>Ошибки</span></div>
   <div><strong>{{ counts.upload }}</strong><span>Загрузки</span></div>
   <div><strong>{{ counts.matching + counts.export }}</strong><span>Сопоставление и экспорт</span></div>
-  <div><strong>{{ unmatched_resumes|length }}</strong><span>Резюме без совпадения в реестре</span></div>
+  <div><strong>{{ unmatched_resumes|length }}</strong><span>Загруженные резюме без привязки</span></div>
   <div><strong>{{ resume_error_rows|length }}</strong><span>Ошибки обработки резюме</span></div>
 </section>
 
@@ -61,8 +61,8 @@
 <section class="panel unmatched-resumes-panel">
   <div class="section-head">
     <div>
-      <h2>Резюме без совпадения в реестре</h2>
-      <p class="muted">Файлы, которые не привязаны ни к одной строке реестра как совпадение или ручная проверка.</p>
+      <h2>Загруженные резюме без привязки</h2>
+      <p class="muted">Excel считается главным списком кандидатов. В нормальном процессе лишних резюме быть не должно; этот блок показывает файлы, которые загрузились, но не привязались к строке Excel.</p>
     </div>
   </div>
   {% if unmatched_resumes %}
@@ -96,7 +96,7 @@
     </table>
   </div>
   {% else %}
-  <p class="muted">Все загруженные резюме сейчас имеют совпадение или строку на ручной проверке.</p>
+  <p class="muted">Все загруженные резюме сейчас привязаны к строкам Excel или находятся на ручной проверке.</p>
   {% endif %}
 </section>
 

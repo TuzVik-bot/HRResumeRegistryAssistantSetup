@@ -35,10 +35,10 @@
 <div class="banner banner-warn" style="margin-bottom:1rem; padding:0.75rem 1rem; background:#fff8e1; border-left:4px solid #ff9800; border-radius:4px">
   <strong>Диагностика совпадений:</strong>
   {% if no_resume_count > 0 %}
-    <span style="margin-right:1rem">⚠ {{ no_resume_count }} кандидат(ов) без резюме — <a href="/upload-resumes">загрузите резюме</a> или <a href="/upload-resumes#scan">сканируйте папку</a></span>
+    <span style="margin-right:1rem">ℹ {{ no_resume_count }} строк Excel без загруженного резюме. Это нормально, если резюме в папке меньше, чем кандидатов в Excel.</span>
   {% endif %}
   {% if unmatched_count > 0 %}
-    <span style="margin-right:1rem">⚠ {{ unmatched_count }} не найдено — проверьте написание ФИО в реестре и резюме</span>
+    <span style="margin-right:1rem">⚠ {{ unmatched_count }} не найдено — проверьте, скачались ли файлы из OneDrive и совпадает ли ФИО в имени файла/резюме с Excel</span>
   {% endif %}
   {% if review_count > 0 %}
     <span>ℹ {{ review_count }} требуют <a href="/manual-review">ручной проверки</a></span>

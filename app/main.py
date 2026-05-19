@@ -1,10 +1,12 @@
 from dataclasses import dataclass
 import csv
+import hashlib
 import io
 import json
 import shutil
 import sqlite3
 import tempfile
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -33,6 +35,9 @@ templates.env.filters["reason_label"] = reason_label
 templates.env.filters["warning_label"] = warning_label
 templates.env.filters["from_json"] = lambda value: json.loads(value or "[]")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+FILE_IO_RETRIES = 3
+FILE_IO_RETRY_DELAY_SECONDS = 0.35
 
 MATCHING_PROGRESS = {
     "state": "idle",
@@ -273,11 +278,11 @@ def scan_folder(folder_path: str = Form(...)):
             skipped += 1
             skipped_files.append(file_path.name)
             continue
-        stored = _store_disk_file_once(file_path, RESUME_UPLOAD_DIR)
-        if stored.reused_existing:
-            uploaded += 1
-            continue
         try:
+            stored = _store_disk_file_once(file_path, RESUME_UPLOAD_DIR)
+            if stored.reused_existing:
+                uploaded += 1
+                continue
             text = extract_text(stored.path)
             text = _ocr_fallback_if_needed(text, stored.path, stored.file_hash, suffix)
             profile = parse_resume_profile(text, file_path.name)
@@ -316,10 +321,28 @@ def scan_folder(folder_path: str = Form(...)):
                     },
                 )
                 continue
+            if _is_cloud_file_access_error(exc):
+                profile = parse_resume_profile("", file_path.name)
+                fallback_hash = _fallback_source_hash(file_path)
+                resume_id = database.insert_resume(file_path.name, file_path, fallback_hash, "", profile)
+                uploaded += 1
+                log_event(
+                    "warn",
+                    "upload",
+                    "resume_cloud_filename_only",
+                    "Файл из облачной папки недоступен локально — используется ФИО из имени файла",
+                    {
+                        "filename": file_path.name,
+                        "format": suffix,
+                        "detail": str(exc),
+                        "resume_id": resume_id,
+                    },
+                )
+                continue
             database.insert_resume(
                 original_filename=file_path.name,
-                file_path=stored.path,
-                file_hash=stored.file_hash,
+                file_path=file_path,
+                file_hash=_fallback_source_hash(file_path),
                 extracted_text="",
                 profile=empty_resume_profile(file_path.name),
                 processing_error=str(exc),
@@ -701,12 +724,12 @@ def _ocr_fallback_if_needed(text: str, file_path: Path, file_hash: str, suffix: 
 def _store_disk_file_once(file_path: Path, target_dir: Path) -> StoredUpload:
     """Like _store_upload_once but for files already on disk."""
     target_dir.mkdir(parents=True, exist_ok=True)
-    incoming_hash = file_sha256(file_path)
+    incoming_hash = _file_sha256_with_retry(file_path)
     for existing in target_dir.iterdir():
-        if existing.is_file() and file_sha256(existing) == incoming_hash:
+        if existing.is_file() and _file_sha256_with_retry(existing) == incoming_hash:
             return StoredUpload(path=existing, file_hash=incoming_hash, reused_existing=True)
     target = _unique_path(target_dir / file_path.name)
-    shutil.copy2(file_path, target)
+    _copy2_with_retry(file_path, target)
     return StoredUpload(path=target, file_hash=incoming_hash, reused_existing=False)
 
 
@@ -729,6 +752,52 @@ def _set_matching_progress(state: str, current: int, total: int, message: str) -
 
 def _can_use_filename_only_doc_profile(suffix: str, exc: Exception) -> bool:
     return suffix == ".doc" and "LibreOffice" in str(exc)
+
+
+def _file_sha256_with_retry(file_path: Path) -> str:
+    return _retry_file_io(lambda: file_sha256(file_path))
+
+
+def _copy2_with_retry(source: Path, target: Path) -> None:
+    _retry_file_io(lambda: shutil.copy2(source, target))
+
+
+def _retry_file_io(operation):
+    last_exc = None
+    for attempt in range(FILE_IO_RETRIES):
+        try:
+            return operation()
+        except OSError as exc:
+            last_exc = exc
+            if attempt == FILE_IO_RETRIES - 1:
+                break
+            time.sleep(FILE_IO_RETRY_DELAY_SECONDS)
+    raise last_exc
+
+
+def _is_cloud_file_access_error(exc: Exception) -> bool:
+    detail = str(exc).lower()
+    markers = [
+        "onedrive",
+        "cloud",
+        "облач",
+        "not downloaded",
+        "provider",
+        "0x8007016a",
+        "winerror 362",
+        "winerror 365",
+        "файл недоступен",
+    ]
+    return isinstance(exc, OSError) or any(marker in detail for marker in markers)
+
+
+def _fallback_source_hash(file_path: Path) -> str:
+    try:
+        stat = file_path.stat()
+        raw = f"{file_path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}"
+    except OSError:
+        raw = str(file_path)
+    return "path:" + hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()
 
 
 def _category_from_path(path: str) -> str:
