@@ -14,9 +14,9 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app import database
+from app import config, database
 from app.ai_extraction import enrich_resume_with_ai_if_needed, should_use_ai_for_local_profile
-from app.config import BASE_DIR, EXPORT_DIR, REGISTRY_UPLOAD_DIR, RESUME_UPLOAD_DIR, ensure_directories
+from app.config import BASE_DIR, EXPORT_DIR, MATCHED_RESUME_DIR, REGISTRY_UPLOAD_DIR, RESUME_UPLOAD_DIR, ensure_directories
 from app.diagnostics import EVENT_FILTERS, log_event, recent_events, resume_error_report, resume_error_summary
 from app.exporter import export_enriched_excel
 from app.file_utils import file_sha256
@@ -86,6 +86,21 @@ def dashboard(request: Request):
             "matches_count": len(database.fetch_all("matches")),
         },
     )
+
+
+@app.post("/clear-all")
+def clear_all_data():
+    deleted_files = _clear_working_files()
+    database.reset_working_data()
+    _set_matching_progress("idle", 0, 0, "")
+    log_event(
+        "info",
+        "app",
+        "clear_all_completed",
+        "Рабочие данные очищены",
+        {"deleted_files": deleted_files},
+    )
+    return RedirectResponse("/", status_code=303)
 
 
 @app.get("/upload-registry")
@@ -660,6 +675,20 @@ def _unique_path(path: Path) -> Path:
         if not candidate.exists():
             return candidate
         index += 1
+
+
+def _clear_working_files() -> int:
+    deleted = 0
+    for directory in [config.REGISTRY_UPLOAD_DIR, config.RESUME_UPLOAD_DIR, config.EXPORT_DIR, config.MATCHED_RESUME_DIR]:
+        directory.mkdir(parents=True, exist_ok=True)
+        for path in directory.iterdir():
+            if path.is_dir():
+                shutil.rmtree(path)
+                deleted += 1
+            elif path.is_file():
+                path.unlink()
+                deleted += 1
+    return deleted
 
 
 @dataclass

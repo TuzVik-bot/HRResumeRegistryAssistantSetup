@@ -9,6 +9,18 @@
     <button type="submit">Запустить сопоставление</button>
   </form>
 </header>
+<section class="panel">
+  <div class="guide-header">
+    <div>
+      <p class="eyebrow">Новый запуск</p>
+      <h2>Очистить приложение</h2>
+      <p class="muted">Удаляет загруженный Excel, резюме, результаты сопоставления и готовые файлы. Настройки приложения сохраняются.</p>
+    </div>
+    <form action="/clear-all" method="post" onsubmit="return confirm('Очистить все загруженные данные, резюме, Excel и результаты сопоставления?');">
+      <button type="submit" class="danger-button">Очистить всё</button>
+    </form>
+  </div>
+</section>
 <section class="stats">
   <div><strong>{{ registries_count }}</strong><span>Источники Excel</span></div>
   <div><strong>{{ candidates_count }}</strong><span>Кандидаты</span></div>

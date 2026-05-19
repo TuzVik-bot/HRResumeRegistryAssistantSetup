@@ -269,3 +269,42 @@ def test_legacy_doc_libreoffice_errors_are_repaired(isolated_project_files):
     assert repaired == 1
     assert resume["processing_error"] is None
     assert "Юрченко Анна Владимировна" in resume["profile_json"]
+
+
+def test_clear_all_data_resets_tables_and_working_files(isolated_project_files):
+    database.init_db()
+    registry_file = config.REGISTRY_UPLOAD_DIR / "registry.xlsx"
+    resume_file = config.RESUME_UPLOAD_DIR / "resume.pdf"
+    export_file = config.EXPORT_DIR / "export.xlsx"
+    matched_file = config.MATCHED_RESUME_DIR / "matched.pdf"
+    for path in [registry_file, resume_file, export_file, matched_file]:
+        path.write_text("data", encoding="utf-8")
+    registry_id = database.insert_registry("registry.xlsx", registry_file)
+    database.insert_candidate(
+        registry_id=registry_id,
+        excel_row_number=2,
+        candidate_id="REG-2",
+        row_data={"ФИО": "Иван Иванов"},
+        full_name="Иван Иванов",
+        vacancy="",
+        status="",
+        recruiter="",
+        quality_warnings=[],
+    )
+    database.insert_resume(
+        original_filename="resume.pdf",
+        file_path=resume_file,
+        file_hash="resume-hash",
+        extracted_text="Иван Иванов",
+        profile={"full_name_original": "Иван Иванов"},
+    )
+
+    response = main.clear_all_data()
+
+    assert response.status_code == 303
+    assert database.fetch_all("registries") == []
+    assert database.fetch_all("candidates") == []
+    assert database.fetch_all("resumes") == []
+    assert database.fetch_all("matches") == []
+    for path in [registry_file, resume_file, export_file, matched_file]:
+        assert not path.exists()

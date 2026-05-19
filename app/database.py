@@ -115,6 +115,7 @@ def reset_working_data() -> None:
             DELETE FROM candidates;
             DELETE FROM resumes;
             DELETE FROM registries;
+            DELETE FROM ai_resume_cache;
             """
         )
 
