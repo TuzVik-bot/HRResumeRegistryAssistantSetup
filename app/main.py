@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+import csv
+import io
 import json
 import shutil
 import sqlite3
@@ -6,14 +8,14 @@ import tempfile
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app import database
 from app.ai_extraction import enrich_resume_with_ai_if_needed, should_use_ai_for_local_profile
 from app.config import BASE_DIR, EXPORT_DIR, REGISTRY_UPLOAD_DIR, RESUME_UPLOAD_DIR, ensure_directories
-from app.diagnostics import EVENT_FILTERS, log_event, recent_events
+from app.diagnostics import EVENT_FILTERS, log_event, recent_events, resume_error_report, resume_error_summary
 from app.exporter import export_enriched_excel
 from app.file_utils import file_sha256
 from app.i18n import reason_label, status_label, warning_label
@@ -31,6 +33,13 @@ templates.env.filters["reason_label"] = reason_label
 templates.env.filters["warning_label"] = warning_label
 templates.env.filters["from_json"] = lambda value: json.loads(value or "[]")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+MATCHING_PROGRESS = {
+    "state": "idle",
+    "current": 0,
+    "total": 0,
+    "message": "",
+}
 
 
 @app.on_event("startup")
@@ -305,27 +314,47 @@ def scan_folder(folder_path: str = Form(...)):
 
 @app.post("/run-matching")
 def run_matching_route():
-    results = run_matching()
-    log_event(
-        "info",
-        "matching",
-        "matching_completed",
-        "Сопоставление завершено",
-        {
+    _set_matching_progress("running", 0, 0, "Сопоставление выполняется")
+    try:
+        results = run_matching()
+        counts = {
             "rows_total": len(results),
             "matched": sum(1 for item in results if item["status"] == "matched"),
             "review": sum(1 for item in results if item["status"] == "review"),
             "unmatched": sum(1 for item in results if item["status"] == "unmatched"),
-        },
-    )
+        }
+        _set_matching_progress("completed", len(results), len(results), "Сопоставление завершено")
+        log_event(
+            "info",
+            "matching",
+            "matching_completed",
+            "Сопоставление завершено",
+            counts,
+        )
+    except Exception as exc:
+        _set_matching_progress("failed", 0, 0, str(exc))
+        log_event("error", "matching", "matching_failed", "Ошибка сопоставления", {"detail": str(exc)})
+        raise
     return RedirectResponse("/matching-results", status_code=303)
+
+
+@app.get("/matching-progress")
+def matching_progress():
+    total = int(MATCHING_PROGRESS.get("total") or 0)
+    current = int(MATCHING_PROGRESS.get("current") or 0)
+    percent = int((current / total) * 100) if total else (100 if MATCHING_PROGRESS["state"] == "completed" else 0)
+    return {**MATCHING_PROGRESS, "percent": percent}
 
 
 @app.get("/matching-results")
 def matching_results(request: Request):
     return templates.TemplateResponse(
         "matching_results.html",
-        {"request": request, "rows": database.fetch_candidates_with_matches()},
+        {
+            "request": request,
+            "rows": database.fetch_candidates_with_matches(),
+            "resume_error_summary": resume_error_summary(limit=200),
+        },
     )
 
 
@@ -364,7 +393,7 @@ def update_manual_review(
         resume_payload = {
             "file_path": selected_resume["file_path"],
         }
-        new_filename, copied_path = copy_matched_resume(candidate_payload, resume_payload)
+        new_filename, copied_path = copy_matched_resume(candidate_payload, resume_payload, status="matched")
         output_path = str(copied_path)
         database.set_manual_match(
             candidate_db_id=candidate_db_id,
@@ -434,16 +463,32 @@ def diagnostics_page(request: Request):
         filter_name = "all"
     rows, counts = recent_events(filter_name=filter_name, limit=1000)
     unmatched_resumes = database.fetch_resumes_without_registry_matches()
+    resume_errors = resume_error_report(limit=1000)
     return templates.TemplateResponse(
         "diagnostics.html",
         {
             "request": request,
             "rows": rows,
             "unmatched_resumes": unmatched_resumes,
+            "resume_error_rows": resume_errors,
             "active_filter": filter_name,
             "filters": EVENT_FILTERS,
             "counts": counts,
         },
+    )
+
+
+@app.get("/diagnostics/resume-errors.csv")
+def diagnostics_resume_errors_csv():
+    output = io.StringIO()
+    fieldnames = ["created_at", "level", "action", "message", "filename", "format", "detail", "files_total", "failed", "skipped"]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(resume_error_report(limit=1000))
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="resume-errors.csv"'},
     )
 
 
@@ -635,6 +680,17 @@ def _mask_secret(value: str) -> str:
     if not value:
         return "не задан"
     return "ключ задан"
+
+
+def _set_matching_progress(state: str, current: int, total: int, message: str) -> None:
+    MATCHING_PROGRESS.update(
+        {
+            "state": state,
+            "current": current,
+            "total": total,
+            "message": message,
+        }
+    )
 
 
 def _category_from_path(path: str) -> str:

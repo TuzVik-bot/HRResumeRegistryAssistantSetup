@@ -17,8 +17,9 @@ import webbrowser
 import uvicorn
 
 from app import database
-from app.config import APP_NAME, PROJECT_FILES_DIR, ensure_directories
+from app.config import APP_NAME, BASE_DIR, PROJECT_FILES_DIR, ensure_directories
 from app.diagnostics import log_event
+from app.resume_parser import get_soffice_status
 
 
 HOST = "127.0.0.1"
@@ -263,6 +264,38 @@ def _setup_launcher_logging() -> None:
     _write_launcher_log("Launcher logging initialized")
 
 
+def _log_startup_environment() -> None:
+    write_ok, write_detail = _check_project_files_write_access()
+    soffice = get_soffice_status()
+    lines = [
+        f"Python version: {sys.version}",
+        f"Python executable: {sys.executable}",
+        f"Frozen: {bool(getattr(sys, 'frozen', False))}",
+        f"MEIPASS: {getattr(sys, '_MEIPASS', '')}",
+        f"Base dir: {BASE_DIR}",
+        f"Project files dir: {PROJECT_FILES_DIR}",
+        f"Working dir: {Path.cwd()}",
+        f"LOCALAPPDATA: {os.environ.get('LOCALAPPDATA', '')}",
+        f"Project files write access: {'ok' if write_ok else 'failed'} ({write_detail})",
+        f"LibreOffice/soffice: {'found at ' + soffice['path'] if soffice['available'] else 'not found'}",
+    ]
+    for line in lines:
+        _write_launcher_log(line)
+
+
+def _check_project_files_write_access() -> tuple[bool, str]:
+    try:
+        PROJECT_FILES_DIR.mkdir(parents=True, exist_ok=True)
+        test_path = PROJECT_FILES_DIR / ".launcher_write_test"
+        test_path.write_text("ok", encoding="utf-8")
+        if test_path.read_text(encoding="utf-8") != "ok":
+            return False, "write test content mismatch"
+        test_path.unlink(missing_ok=True)
+        return True, "ok"
+    except OSError as exc:
+        return False, str(exc)
+
+
 def _write_launcher_log(message: str) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     line = f"{datetime.now().isoformat(timespec='seconds')} {message}\n"
@@ -296,6 +329,7 @@ def _make_button(parent, text: str, command, variant: str = "default") -> tk.But
 def main() -> None:
     ensure_directories()
     _setup_launcher_logging()
+    _log_startup_environment()
     database.init_db()
     port = _find_available_port()
     url = f"http://{HOST}:{port}"

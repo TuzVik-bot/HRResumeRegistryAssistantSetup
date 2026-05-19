@@ -277,3 +277,10 @@ def _find_soffice_path() -> Path | None:
         if candidate.exists():
             return candidate
     return None
+
+
+def get_soffice_status() -> dict[str, str | bool]:
+    path = _find_soffice_path()
+    if path:
+        return {"available": True, "path": str(path)}
+    return {"available": False, "path": ""}

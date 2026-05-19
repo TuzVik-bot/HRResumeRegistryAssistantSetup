@@ -13,6 +13,49 @@
   <div><strong>{{ counts.upload }}</strong><span>Загрузки</span></div>
   <div><strong>{{ counts.matching + counts.export }}</strong><span>Сопоставление и экспорт</span></div>
   <div><strong>{{ unmatched_resumes|length }}</strong><span>Резюме без совпадения в реестре</span></div>
+  <div><strong>{{ resume_error_rows|length }}</strong><span>Ошибки обработки резюме</span></div>
+</section>
+
+<section class="panel">
+  <div class="section-head">
+    <div>
+      <h2>Ошибки обработки резюме</h2>
+      <p class="muted">Последние ошибки загрузки и сканирования файлов. Подробный список можно выгрузить в CSV.</p>
+    </div>
+    <a class="file-link" href="/diagnostics/resume-errors.csv">Скачать CSV</a>
+  </div>
+  {% if resume_error_rows %}
+  <div class="table-wrap compact-table-wrap">
+    <table class="data-table diagnostics-table">
+      <thead>
+        <tr>
+          <th>Время</th>
+          <th>Файл</th>
+          <th>Действие</th>
+          <th>Деталь</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in resume_error_rows[:20] %}
+        <tr>
+          <td>{{ row.created_at }}</td>
+          <td>{{ row.filename or "пакет" }}</td>
+          <td>{{ row.action }}</td>
+          <td>
+            {% if row.detail %}
+            <div class="reason-cell">{{ row.detail }}</div>
+            {% else %}
+            <span class="muted">ошибок: {{ row.failed }}, пропущено: {{ row.skipped }}, всего: {{ row.files_total }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Ошибок обработки резюме пока нет.</p>
+  {% endif %}
 </section>
 
 <section class="panel unmatched-resumes-panel">

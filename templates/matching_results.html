@@ -2,8 +2,13 @@
 {% block content %}
 <header class="page-header">
   <h1>Результаты сопоставления</h1>
-  <form action="/run-matching" method="post"><button type="submit">Запустить сопоставление</button></form>
+  <form action="/run-matching" method="post" data-matching-form><button type="submit">Запустить сопоставление</button></form>
 </header>
+
+<section class="panel" data-matching-progress hidden>
+  <strong data-matching-progress-title>Сопоставление выполняется</strong>
+  <p class="muted" data-matching-progress-message>Проверяем резюме и реестр.</p>
+</section>
 
 {% set unmatched_count = rows | selectattr("match_status", "equalto", "unmatched") | list | length %}
 {% set review_count = rows | selectattr("match_status", "equalto", "review") | list | length %}
@@ -14,6 +19,15 @@
   Сканирование папки завершено: загружено {{ request.query_params.get("scan_uploaded") }},
   ошибок {{ request.query_params.get("scan_failed", 0) }},
   пропущено (неподдерживаемый формат) {{ request.query_params.get("scan_skipped", 0) }}.
+</div>
+{% endif %}
+
+{% if resume_error_summary.count > 0 %}
+<div class="banner banner-warn" style="margin-bottom:1rem; padding:0.75rem 1rem; background:#fff8e1; border-left:4px solid #ff9800; border-radius:4px">
+  <strong>Есть ошибки обработки резюме:</strong>
+  {{ resume_error_summary.count }} событ.
+  <a href="/diagnostics?filter=errors">Открыть диагностику</a>
+  или <a href="/diagnostics/resume-errors.csv">скачать CSV</a>.
 </div>
 {% endif %}
 
@@ -77,4 +91,5 @@
     </tbody>
   </table>
 </section>
+<script src="{{ url_for('static', path='/matching-progress.js') }}?v=1" defer></script>
 {% endblock %}

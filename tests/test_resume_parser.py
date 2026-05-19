@@ -42,3 +42,26 @@ def test_extract_doc_uses_libreoffice_conversion(tmp_path, monkeypatch):
     extracted = resume_parser.extract_text(source_path)
 
     assert "Converted from DOC" in extracted
+
+
+def test_get_soffice_status_reports_env_path(tmp_path, monkeypatch):
+    soffice = tmp_path / "soffice"
+    soffice.write_text("fake", encoding="utf-8")
+    monkeypatch.setenv("SOFFICE_PATH", str(soffice))
+
+    status = resume_parser.get_soffice_status()
+
+    assert status == {"available": True, "path": str(soffice)}
+
+
+def test_extract_doc_reports_missing_libreoffice(tmp_path, monkeypatch):
+    source_path = tmp_path / "legacy.doc"
+    source_path.write_bytes(b"legacy doc placeholder")
+    monkeypatch.setattr(resume_parser, "_find_soffice_path", lambda: None)
+
+    try:
+        resume_parser.extract_text(source_path)
+    except RuntimeError as exc:
+        assert "LibreOffice" in str(exc)
+    else:
+        raise AssertionError("Expected RuntimeError when LibreOffice is missing")

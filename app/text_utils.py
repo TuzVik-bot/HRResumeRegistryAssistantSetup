@@ -1,3 +1,4 @@
+from itertools import product
 import re
 from unidecode import unidecode
 
@@ -87,18 +88,25 @@ def name_variants(full_name: str | None) -> set[str]:
         variants.append(sorted(token_variants))
     if not variants:
         return set()
-    direct = " ".join(items[0] for items in variants)
-    reversed_name = " ".join(items[0] for items in reversed(variants))
-    result = {direct, reversed_name}
-    if len(variants) == 2:
-        for first in variants[0]:
-            for second in variants[1]:
-                result.add(f"{first} {second}")
-                result.add(f"{second} {first}")
+    primary_tokens = [items[0] for items in variants]
+    result = {" ".join(primary_tokens), " ".join(reversed(primary_tokens))}
+    if len(variants) >= 2:
+        first_three = variants[:3]
+        token_combinations = list(product(*first_three))[:50]
+        orders = [(0, 1), (1, 0)]
+        if len(first_three) >= 3:
+            orders.extend([(0, 1, 2), (1, 2, 0), (0, 2, 1), (2, 1, 0)])
+        for combo in token_combinations:
+            for order in orders:
+                if max(order) < len(combo):
+                    result.add(" ".join(combo[index] for index in order))
     return {normalize_text(v) for v in result if v.strip()}
 
 
-def safe_filename(value: str | None, fallback: str = "value") -> str:
+def safe_filename(value: str | None, fallback: str = "value", max_length: int = 180) -> str:
     cleaned = re.sub(r"[^\wа-яА-ЯёЁ$.-]+", "_", str(value or fallback), flags=re.UNICODE)
     cleaned = re.sub(r"_+", "_", cleaned).strip("_.")
-    return cleaned or fallback
+    cleaned = cleaned or fallback
+    if len(cleaned) <= max_length:
+        return cleaned
+    return cleaned[:max_length].rstrip("_.") or fallback[:max_length]

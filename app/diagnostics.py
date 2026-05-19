@@ -1,4 +1,5 @@
 import re
+import json
 from typing import Any
 
 from app import database
@@ -12,6 +13,7 @@ EVENT_FILTERS = {
     "matching": "Сопоставление",
     "export": "Экспорт",
 }
+RESUME_ERROR_ACTIONS = {"resume_processing_error", "resume_batch_failed", "resume_scan_error"}
 
 _SENSITIVE_KEY_MARKERS = {
     "api_key",
@@ -60,6 +62,37 @@ def recent_events(filter_name: str = "all", limit: int = 1000) -> tuple[list[dic
     return rows, counts
 
 
+def resume_error_report(limit: int = 1000) -> list[dict[str, Any]]:
+    report = []
+    for row in database.fetch_recent_events(limit=limit):
+        if row["action"] not in RESUME_ERROR_ACTIONS:
+            continue
+        context = _parse_context(row["context_json"])
+        report.append(
+            {
+                "created_at": row["created_at"],
+                "level": row["level"],
+                "action": row["action"],
+                "message": row["message"],
+                "filename": context.get("filename", ""),
+                "format": context.get("format", ""),
+                "detail": context.get("detail", ""),
+                "files_total": context.get("files_total", ""),
+                "failed": context.get("failed", ""),
+                "skipped": context.get("skipped", ""),
+            }
+        )
+    return report
+
+
+def resume_error_summary(limit: int = 1000) -> dict[str, Any]:
+    rows = resume_error_report(limit=limit)
+    return {
+        "count": len(rows),
+        "latest": rows[0] if rows else None,
+    }
+
+
 def sanitize_context(context: dict[str, Any] | None) -> dict[str, Any]:
     if not context:
         return {}
@@ -92,3 +125,13 @@ def _looks_like_email(value: str) -> bool:
 def _looks_like_phone(value: str) -> bool:
     digits = re.sub(r"\D", "", value)
     return len(digits) >= 10 and len(digits) <= 16
+
+
+def _parse_context(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
