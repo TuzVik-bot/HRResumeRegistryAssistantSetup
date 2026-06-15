@@ -1,0 +1,104 @@
+name: Build portable HR matcher for Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+      - codex/**
+    paths:
+      - "portable_matcher/**"
+      - ".github/workflows/portable-matcher-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-portable-windows:
+    name: Build HRMatcherPortable-Windows.zip
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Build portable application
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .\portable_matcher\dist\build_logs | Out-Null
+          try {
+            Push-Location .\portable_matcher
+            .\build_windows.ps1 -UseCurrentPython *>&1 | Tee-Object .\dist\build_logs\portable-windows-build.log
+          }
+          catch {
+            $_ | Out-File -FilePath .\portable_matcher\dist\build_logs\portable-windows-build.log -Append
+            throw
+          }
+          finally {
+            Pop-Location
+          }
+
+      - name: Verify portable application
+        shell: pwsh
+        run: |
+          $exe = ".\portable_matcher\dist\HRMatcherPortable\HRMatcher.exe"
+          $readme = ".\portable_matcher\dist\HRMatcherPortable\README.md"
+          $checklist = ".\portable_matcher\dist\HRMatcherPortable\WINDOWS_11_CHECKLIST_RU.md"
+          $aliases = ".\portable_matcher\dist\HRMatcherPortable\config\name_aliases.json"
+
+          foreach ($path in @($exe, $readme, $checklist, $aliases)) {
+            if (-not (Test-Path $path)) {
+              throw "Missing portable build file: $path"
+            }
+          }
+
+      - name: Create ZIP archive
+        shell: pwsh
+        run: |
+          $zipPath = ".\portable_matcher\dist\HRMatcherPortable-Windows.zip"
+          if (Test-Path $zipPath) {
+            Remove-Item $zipPath -Force
+          }
+          Compress-Archive `
+            -Path ".\portable_matcher\dist\HRMatcherPortable" `
+            -DestinationPath $zipPath `
+            -CompressionLevel Optimal
+
+      - name: Upload Windows portable ZIP
+        uses: actions/upload-artifact@v7
+        with:
+          name: HRMatcherPortable-Windows
+          path: portable_matcher/dist/HRMatcherPortable-Windows.zip
+          if-no-files-found: error
+
+      - name: Upload Windows build log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: HRMatcherPortable-Windows-build-log
+          path: portable_matcher/dist/build_logs/portable-windows-build.log
+          if-no-files-found: warn
+
+      - name: Publish build summary
+        if: always()
+        shell: pwsh
+        run: |
+          "## Portable Windows build" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "Artifact: HRMatcherPortable-Windows" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "Expected executable inside ZIP: HRMatcherPortable\HRMatcher.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+          $log = ".\portable_matcher\dist\build_logs\portable-windows-build.log"
+          if (Test-Path $log) {
+            "### Last build log lines" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            '```text' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            Get-Content $log -Tail 120 | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            '```' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }

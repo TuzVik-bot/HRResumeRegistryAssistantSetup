@@ -6,6 +6,7 @@ __pycache__/
 *.pyc
 build/
 dist/
+portable_matcher/test_data/
 packaging/Архив/
 packaging/Архив.zip
 
